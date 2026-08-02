@@ -6,6 +6,8 @@
 	"editor.insertSpaces": true,
   "editor.tabSize": 2, //デフォルト 4
 
+  "editor.inlineSuggest.enabled": false,
+
 	"files.autoSave": "afterDelay", //デフォルト off
 	"files.autoSaveDelay": 1000, //デフォルト 1000
 
@@ -109,4 +111,5 @@
   "[markdown]": {
       "editor.defaultFormatter": "esbenp.prettier-vscode"
   },
+  "python-envs.defaultEnvManager": "ms-python.python:system",
 }

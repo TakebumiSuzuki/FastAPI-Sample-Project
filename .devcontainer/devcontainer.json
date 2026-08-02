@@ -1,6 +1,6 @@
 // devcontainer 拡張がこの jsonファイルを読み込んでそれに従ってコンテナを作る。
 {
-  "name": "TEMPLATE-PROJECT",
+  "name": "FastAPI-Lessons",
   "dockerComposeFile": "docker-compose.yml",
   "service": "claude-code",
   "workspaceFolder": "/workspaces/cc-dev-container",

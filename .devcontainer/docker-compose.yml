@@ -40,8 +40,8 @@ services:
 
 volumes:
   # これらのボリューム名は内部的には、
-  # cc-dev-container_devcontainer_claude-bashhistory と、
-  # cc-dev-container_devcontainer_claude-state のようになっている。つまり先頭にフォルダ名がつく。
+  # fastapi-practice_devcontainer_claude-bashhistory と、
+  # fastapi-practice_devcontainer_claude-state のようになっている。つまり先頭にフォルダ名がつく。
   # 別の階層で同じフォルダ名のプロジェクトを作ると、競合してしまうので注意。
   claude-state:
   claude-bashhistory:
