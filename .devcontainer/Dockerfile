@@ -76,6 +76,16 @@ RUN uv python install 3.13 \
 RUN mkdir -p /opt/npm-global \
     && chown -R node:node /opt/npm-global
 
+# Antigravity CLI (コマンド名 agy) の設置先も同じ思想で /opt に用意する。
+# 公式インストーラ install.sh の既定の設置先は $HOME/.local/bin だが、
+#   ① このプロジェクトはユーザーのホームではなく /opt に外部ツールを集める方針であること
+#   ② agy は専用の auto-updater サーバーを持つ「自己アップデートする前提」のバイナリで、
+#      /usr/local/bin のような root 所有の場所に置くと node ユーザーが上書きできないこと
+# の 2 点から、ディレクトリごと node 所有にできる /opt/antigravity/bin を使う。
+# (uv や ruff を /usr/local/bin に置いているのは、あちらが自己アップデートしないため。)
+RUN mkdir -p /opt/antigravity/bin \
+    && chown -R node:node /opt/antigravity
+
 # PATH と NPM_CONFIG_PREFIX を /opt/npm-global に向ける
 # npm install -g は NPM_CONFIG_PREFIX で指定した場所に書き込む（デフォルトは /usr/local/lib/node_modules）
 # NPM_CONFIG_PREFIX の値は npm を実行する際に必ず読み込まれ、グローバルインストールの保存先として設定。
@@ -85,8 +95,12 @@ RUN mkdir -p /opt/npm-global \
 # ランタイム(dockerd/containerd)は、コンテナ起動時の PID 1 (即時スリープ状態になる)だけでなく、
 # 後から docker exec で入ってくるプロセス(VS Code Server やターミナル等)にも、同じ Config.Env を適用する。
 # そこから生まれる子プロセス(シェル・npm・python 等)は fork/exec の継承で受け継ぐ。
+# /opt/antigravity/bin も PATH に加える。install.sh は最後に `agy install --dir <path>` を呼んで
+# シェル設定ファイル (.zshrc 等) に PATH を書き足そうとするが、このプロジェクトの ~/.zshrc は
+# compose の bind mount でホスト側のファイルに差し替えられるため、ビルド時の書き込みは実行時に
+# 見えなくなる。したがって PATH はここで自分で通す必要がある。
 ENV NPM_CONFIG_PREFIX=/opt/npm-global \
-    PATH="/opt/npm-global/bin:/opt/uv-venv/bin:/home/node/.local/bin:${PATH}" \
+    PATH="/opt/npm-global/bin:/opt/antigravity/bin:/opt/uv-venv/bin:/home/node/.local/bin:${PATH}" \
     SHELL=/bin/zsh
 
 # node グループに sudo 権限を付与
@@ -154,6 +168,15 @@ RUN npm install -g @anthropic-ai/claude-code docx pptxgenjs @anthropic-ai/sandbo
 # 代償としてヘッド付き(--headed)操作と channel='chromium'（新ヘッドレスモード）は使えなくなる。
 # それらが必要になったら --only-shell を外す。
 RUN playwright-cli install-browser chromium --only-shell
+
+# Antigravity CLI (agy) を公式インストーラで導入する。npm パッケージではなく Go 製の単一バイナリで、
+# install.sh は「manifest (JSON) を引く → tar.gz を取得 → SHA512 を照合 → 展開して配置」を行うだけで、
+# コンパイルはしない。uv / ruff を公式配布バイナリで入れているのと実質同じことをしている。
+# `bash -s --` は、パイプで流し込んだスクリプトに引数を渡すための書き方。
+# install.sh が受け付けるオプションは -d/--dir と -h/--help の 2 つだけで、それ以外はエラーになる。
+# アーキテクチャ (x64 / arm64) と libc (glibc / musl) は install.sh 側が uname で自動判定する。
+# なお展開後のバイナリは約 185MB あり、その分イメージが大きくなる。
+RUN curl -fsSL https://antigravity.google/cli/install.sh | bash -s -- --dir /opt/antigravity/bin
 
 # WORKDIR は指定したディレクトリが存在しなければ自動的に作成し、途中の親ディレクトリも含めて作ってくれる。
 # mkdir -p に近い挙動。

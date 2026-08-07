@@ -3,6 +3,9 @@
 ※ 4-1（リクエストボディ）と 4-2（`response_model`）に、
 4-3（`Field` / バリデータ / `model_config`）と 4-4（入力用・出力用・DB 用の描き分け）を追記済み。
 
+※ このノート作成後、`schema.py` は `app/schemas.py` に移動・改名した
+（→ `docs/notes/08-settings.md` 以降の構成）。以下の本文は当時の記録のまま残している。
+
 ## やったこと
 
 `schema.py` を新設して Pydantic のクラスを置き、`main.py` に POST エンドポイントを追加した。

@@ -83,7 +83,7 @@
 ### 06. APIRouter でファイル分割
 - `APIRouter` を作り `app.include_router()` で登録する
 - `prefix` / `tags` / `dependencies` / `responses`
-- `app/api/routes/` へ振り分ける。`main.py` を薄く保つ
+- `app/routes/` へ振り分ける。`main.py` を薄く保つ
 - import の名前衝突を避ける書き方（公式が明示している注意点）
 
 **できるようになること**：エンドポイントが増えても `main.py` が膨らまない

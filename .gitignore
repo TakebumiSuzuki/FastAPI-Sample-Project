@@ -134,3 +134,7 @@ temp/
 
 # ===== Project-local (not versioned) =====
 creation_log.md
+
+
+
+*.db

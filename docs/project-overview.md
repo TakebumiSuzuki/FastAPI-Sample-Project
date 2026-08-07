@@ -52,26 +52,24 @@ FastAPI によるバックエンド API を**学習しながら実装してい�
 cc-dev-container/
 ├── backend/                  # FastAPI（本プロジェクトの主戦場）
 │   ├── app/
-│   │   ├── main.py           # FastAPI() の生成と router の登録
-│   │   ├── core/             # config.py（設定）, security.py（認証まわり）
-│   │   ├── api/
-│   │   │   ├── deps.py       # 依存性注入（DB セッション、現在のユーザー）
-│   │   │   └── routes/       # エンドポイント定義
-│   │   ├── models/           # DB のテーブル定義（SQLAlchemy）
-│   │   ├── schemas/          # API の入出力の形（Pydantic）
-│   │   ├── crud/             # DB 読み書きの関数群
-│   │   └── db/               # session.py（エンジンとセッション）
-│   ├── alembic/              # マイグレーション履歴
-│   ├── tests/
+│   │   ├── core/
+│   │   │   ├── config.py     # 設定（Settings）
+│   │   │   └── exceptions.py # 例外ハンドラーの定義と登録
+│   │   ├── deps.py           # 依存性注入（共通クエリ、DBセッションなど）
+│   │   ├── routes/           # エンドポイント定義（items.py など）
+│   │   └── schemas.py        # API の入出力の形（Pydantic）
+│   ├── main.py               # FastAPI() の生成と router の登録
 │   ├── pyproject.toml
-│   └── Dockerfile
+│   └── uv.lock
 ├── frontend/                 # Vue（未着手）
 ├── docs/
 │   ├── project-overview.md   # このファイル
 │   ├── syllabus.md           # 学習カリキュラム
 │   └── notes/                # 章ごとの学習まとめ
 ├── .devcontainer/
-└── compose.yml
+├── AGENTS.md -> Claude.md
+├── GEMINI.md -> Claude.md
+└── Claude.md
 ```
 
 **原則**：`backend/` と `frontend/` で依存管理を混ぜない。
