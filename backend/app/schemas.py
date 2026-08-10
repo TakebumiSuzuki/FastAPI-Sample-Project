@@ -22,6 +22,10 @@ class ItemCreate(ItemBase):
 
 class ItemPublic(ItemBase):
     id: int
+    
+    model_config = ConfigDict(from_attributes=True)
+    
+
 
 
 class ItemUpdate(BaseModel):
