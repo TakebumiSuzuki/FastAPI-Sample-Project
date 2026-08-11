@@ -8,6 +8,7 @@ class ItemBase(BaseModel):
     price: float = Field(gt=0)
     sale_price: float | None = Field(default=None, gt=0)
     description: str | None = Field(default=None, max_length=5000)
+    category_id: int = Field(gt=0)
 
     @model_validator(mode="after")
     def check_sale_price(self):
@@ -22,7 +23,7 @@ class ItemCreate(ItemBase):
 
 class ItemPublic(ItemBase):
     id: int
-    
+    category: "CategoryPublic"
     model_config = ConfigDict(from_attributes=True)
     
 
@@ -35,6 +36,7 @@ class ItemUpdate(BaseModel):
     price: float | None = Field(default=None, gt=0)
     sale_price: float | None = Field(default=None, gt=0)
     description: str | None = Field(default=None, max_length=5000)
+    category_id: int | None = Field(default=None)
 
     @model_validator(mode="after")
     def check_no_data(self):
@@ -51,3 +53,14 @@ class ItemUpdate(BaseModel):
         ):
             raise ValueError("sale_price must be lower than price")
         return self
+
+
+class CategoryBase(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(min_length=3, max_length=30)
+
+class CategoryPublic(CategoryBase):
+    model_config = ConfigDict(from_attributes=True)
+    id: int = Field(ge=1)
+    
+    

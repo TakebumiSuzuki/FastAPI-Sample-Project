@@ -1,7 +1,7 @@
 from decimal import Decimal
 
-from sqlalchemy import Numeric, String
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy import Numeric, String, ForeignKey
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
 
@@ -15,3 +15,6 @@ class Item(Base):
     sale_price: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
     description: Mapped[str | None] = mapped_column(String(5000))
     secret_memo: Mapped[str | None] = mapped_column(String(1000))
+    category_id: Mapped[int] = mapped_column(ForeignKey("categories.id"))
+    
+    category: Mapped["Category"] = relationship("Category", back_populates="items")

@@ -1,20 +1,20 @@
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from app.models.item import Item 
 from app.schemas import ItemCreate, ItemUpdate 
 
 def get_item_from_id(db: Session, item_id: int) -> Item | None:
-    stmt = select(Item).where(Item.id == item_id)
+    stmt = select(Item).where(Item.id == item_id).options(joinedload(Item.category))
     item = db.execute(stmt).scalar_one_or_none()
     return item
 
 def get_item_by_name(db: Session, item_name: str) -> Item | None:
-    stmt = select(Item).where(Item.name == item_name)
+    stmt = select(Item).where(Item.name == item_name).options(joinedload(Item.category))
     item = db.execute(stmt).scalar_one_or_none()
     return item
 
 def get_items(db: Session, skip: int = 0, limit: int = 10) -> list[Item]:
-    stmt = select(Item).offset(skip).limit(limit)
+    stmt = select(Item).offset(skip).limit(limit).options(joinedload(Item.category))
     items = db.execute(stmt).scalars().all()
     return items
 
