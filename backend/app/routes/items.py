@@ -1,13 +1,16 @@
 from typing import Annotated
-from sqlalchemy.orm import Session 
 
+from fastapi import APIRouter, Body, Depends, HTTPException, Path
+from sqlalchemy.orm import Session
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query, Body
-
+from app.crud.item import create_item as crud_create_item
+from app.crud.item import delete_item as crud_delete_item
+from app.crud.item import get_item_by_name, get_item_from_id
+from app.crud.item import get_items as crud_get_items
+from app.crud.item import update_item as crud_update_item
 from app.deps import CommonQueryParams, get_db_session
-from app.schemas import ItemCreate, ItemPublic, ItemUpdate
-from app.crud.item import get_item_from_id, get_item_by_name, get_items as crud_get_items, create_item as crud_create_item, update_item as crud_update_item, delete_item as crud_delete_item
 from app.models.item import Item
+from app.schemas import ItemCreate, ItemPublic, ItemUpdate
 
 router = APIRouter(prefix="/items", tags=["items"])
 
@@ -46,8 +49,8 @@ def get_item(
         return item
     else:
         raise ItemNotFound(item_id)
-    
-    
+
+
 @router.get("", response_model=list[ItemPublic])
 def get_items(
     db: Annotated[Session, Depends(get_db_session)],
@@ -57,11 +60,9 @@ def get_items(
     return items
 
 
-
-
 @router.post("", response_model=ItemPublic, status_code=201)
 def create_item(
-    db: Annotated[Session, Depends(get_db_session)], 
+    db: Annotated[Session, Depends(get_db_session)],
     new_item: Annotated[ItemCreate, Body()],
 ) -> Item:
     if get_item_by_name(db=db, item_name=new_item.name) is not None:
@@ -69,11 +70,12 @@ def create_item(
     new_item = crud_create_item(db=db, item_in=new_item)
     return new_item
 
+
 @router.put("/{item_id}", response_model=ItemPublic)
 def update_item(
     db: Annotated[Session, Depends(get_db_session)],
     item_id: Annotated[int, Path()],
-    update: Annotated[ItemUpdate, Body()]
+    update: Annotated[ItemUpdate, Body()],
 ) -> Item:
     item = get_item_from_id(db=db, item_id=item_id)
     if item is None:
@@ -81,10 +83,10 @@ def update_item(
     new_item = crud_update_item(db=db, db_item=item, item_in=update)
     return new_item
 
-@router.delete("/{item_id}", status_code=204) 
+
+@router.delete("/{item_id}", status_code=204)
 def delete_item(
-    db: Annotated[Session, Depends(get_db_session)],
-    item_id: Annotated[int, Path()]
+    db: Annotated[Session, Depends(get_db_session)], item_id: Annotated[int, Path()]
 ) -> None:
     item = get_item_from_id(db=db, item_id=item_id)
     if item is None:

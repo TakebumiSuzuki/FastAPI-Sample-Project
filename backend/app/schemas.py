@@ -25,8 +25,6 @@ class ItemPublic(ItemBase):
     id: int
     category: "CategoryPublic"
     model_config = ConfigDict(from_attributes=True)
-    
-
 
 
 class ItemUpdate(BaseModel):
@@ -59,8 +57,11 @@ class CategoryBase(BaseModel):
     model_config = ConfigDict(extra="forbid")
     name: str = Field(min_length=3, max_length=30)
 
+
 class CategoryPublic(CategoryBase):
     model_config = ConfigDict(from_attributes=True)
     id: int = Field(ge=1)
-    
-    
+
+
+class CategoryCreate(CategoryBase):
+    pass
