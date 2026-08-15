@@ -121,6 +121,33 @@ Pylance（静的型チェッカー）は `.env` ファイルを読まないた�
 admin_email: EmailStr   # "not-an-email" を入れると起動時に ValidationError
 ```
 
+### クラス定義とインスタンス化のライフサイクル
+
+- **モジュール読み込み時（起動時）**：`class Settings(BaseSettings): ...` というクラスオブジェクト（設計図・工場）が定義されるだけで、インスタンス化（`Settings()`）はまだ行われない。この時点では `.env` や環境変数は読み込まれない。
+- **初回 `get_settings()` 呼び出し時（ランタイム）**：初めて `Settings()` が実行され、`.env` や環境変数から値を取り出してバリデーション・インスタンス化が行われる。
+- **2回目以降**：`@lru_cache` により初回生成されたインスタンスがそのまま返される。
+
+### デフォルト値と環境変数の優先順位
+
+`app_name: str = "FastAPI App"` のように定義した場合、イコール右辺は**デフォルト値**となる。
+- **優先順位**：環境変数（OS / `.env`） > デフォルト値
+- 環境変数に `APP_NAME="My Custom API"` が存在すればそれが優先して代入され、存在しない場合のみデフォルト値 `"FastAPI App"` が使われる。
+
+### `Field()` を用いた詳細バリデーション
+
+`BaseSettings` は Pydantic の `BaseModel` をベースにしているため、`Field()` を使った各種バリデーション（`ge`、`le`、`min_length` など）もそのまま利用できる。
+
+```python
+from pydantic import Field
+
+class Settings(BaseSettings):
+    # デフォルト値 50、かつ 10 以上 100 以下
+    items_per_user: int = Field(default=50, ge=10, le=100)
+
+    # 必須項目、かつ 1 以上
+    db_pool_size: int = Field(ge=1)
+```
+
 ---
 
 ## 作成・変更したファイル
@@ -153,3 +180,12 @@ admin_email: EmailStr   # "not-an-email" を入れると起動時に ValidationE
 
 ### Q7. `core/` ディレクトリは何のためにあるか？
 - **A**：特定のエンドポイント（`items` 等）に属さない、アプリ全体の共通基盤を集める場所。`config.py`（設定）や将来追加する `security.py`（JWT 等）を置く。
+
+### Q8. `Settings` のインスタンス化と環境変数読み込みのタイミングは？
+- **A**：モジュール読み込み（import）時点ではクラス定義が作られるだけで、インスタンス化はされない。アプリ実行中に `get_settings()` が初回実行されたタイミングで初めてインスタンス化され、環境変数や `.env` から値が読み込まれる。
+
+### Q9. デフォルト値と環境変数の優先順位は？
+- **A**：環境変数が優先される。`app_name: str = "FastAPI App"` と設定していても、環境変数 `APP_NAME` が設定されていればその値で上書きされる。
+
+### Q10. `BaseSettings` で `Field()` による数値範囲などのバリデーションは可能か？
+- **A**：可能。`items_per_user: int = Field(default=50, ge=10)` のように指定でき、環境変数から読み込んだ値が条件（10以上など）を満たさない場合はインスタンス化時に `ValidationError` となる。

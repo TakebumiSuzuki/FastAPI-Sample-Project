@@ -20,14 +20,19 @@ def get_item(
 ### パス／クエリの振り分けは「名前がパスの `{}` にあるか」だけ
 
 ```
-@app.get("/items/{item_id}")
-def get_item(item_id, q):
-                 ↑     ↑
-        {} にある   {} にない
-        → パス      → クエリ
+GET /items/42?limit=5
+          └┬┘  └──┬──┘
+           │      └ ? の後ろに書かれた値
+           └ URL の一部として書かれた値
 ```
 
-宣言や設定は要らない。引数名とパス文字列の照合で自動的に決まる。
+```python
+@app.get("/items/{item_id}")   # ← 42 の位置に item_id と名前を付ける
+def get_item(
+    item_id: Annotated[int, Path(ge=1)],                # 42 が入る
+    limit:   Annotated[int, Query(ge=1, le=100)] = 10,  # 5 が入る
+): ...
+```
 
 ### 型注釈は「変換ルール」と「検証ルール」を兼ねている
 
@@ -114,34 +119,6 @@ Pydantic は HTTP を知らない汎用のバリデーションライブラリ�
 - `input` … 実際に届いた値
 - `ctx` … 破られた制約の中身（`{"ge": 1}` など）
 
-`limit=abc` のとき `type` は `item_id=abc` と同じ `int_parsing` のままで、
-`loc` の先頭だけ `path` → `query` に変わった。
-**検証の仕組みは1つしかなく、違うのは「どこから値を拾ったか」というラベルだけ**。
-
-### `ge`/`gt`/`le`/`lt` と OpenAPI キーの対応
-
-| 書き方 | 意味 | 生成される OpenAPI キー |
-| --- | --- | --- |
-| `ge=1` | 1 以上（含む） | `minimum: 1` |
-| `gt=1` | 1 より大きい（含まない） | `exclusiveMinimum: 1` |
-| `le=100` | 100 以下 | `maximum: 100` |
-| `lt=100` | 100 未満 | `exclusiveMaximum: 100` |
-
-`g`/`l` が大小の向き、`e` が「等しいを含む」の e。
-
-### `Query(default=10)` ではなく `Annotated[...] = 10` を使う理由
-
-FastAPI を通さずに関数を直接呼んだときの挙動が違う。
-
-```
-def old(limit: int = Query(default=10, ge=1))   →  old()  returns Query(10)
-def new(limit: Annotated[int, Query(ge=1)] = 10) →  new()  returns 10
-```
-
-古い書き方では Python から見たデフォルト値が `Query` オブジェクトそのものなので、
-リクエスト経由では動くが直接呼ぶと壊れる。第4部でテストを書くときに効いてくる。
-`Annotated` は「型注釈にメタ情報を添える」形なので、デフォルト値は素の `10` のまま。
-
 ### `/docs` の 422 は自動注入されている
 
 `openapi/utils.py:517` に条件があり、**そのルートにパラメータが1つでもあるか
@@ -149,19 +126,6 @@ def new(limit: Annotated[int, Query(ge=1)] = 10) →  new()  returns 10
 引数を取らない `/` には 422 が付かない。`/docs` で見比べると確認できる。
 
 ## 詰まった点・気づき
-
-### デフォルト値ありの引数の後ろにデフォルト値なしの引数は置けない
-
-`limit` から `= 10` を消したらサーバーが起動しなくなった。
-
-```
-def f(a, b=1, c): pass
-→ SyntaxError: parameter without a default follows parameter with a default
-```
-
-**これは Python の文法の話で FastAPI とは無関係。**
-URL 上の `?q=...&limit=...` の順番とも一切関係ない。
-デフォルト値を外すなら、その引数をデフォルト持ちの引数より前に移す必要がある。
 
 ### Swagger UI は `exclusiveMinimum` / `exclusiveMaximum` を表示しない
 
@@ -171,13 +135,34 @@ URL 上の `?q=...&limit=...` の順番とも一切関係ない。
 FastAPI 側は正しく、**Swagger UI が描いていないだけ**。
 （なぜ省くのかは未確認）`ge`/`le` なら `minimum`/`maximum` として表示される。
 
-### `ge` と `gt` を書き間違えた
-
-「1以上100以下」のつもりで `gt=1, lt=100` と書き、実際には 2以上99以下になっていた。
-エラーの `type` が `greater_than`（`ge` なら `greater_than_equal`）、
-`ctx` が `{"gt": 1}` になっているので、レスポンスを読めば気づける。
 
 ### `q` の型が `/docs` で `string | (string | null)` と表示される
 
 `str | None` から `anyOf: [{"type":"string"}, {"type":"null"}]` が生成されており、
 スキーマ自体はおかしくない。外側の `string |` は Swagger UI の表示の癖。
+
+## Q&A
+
+### Q. `Path(ge=1)` や `Query(ge=1, le=100)` は FastAPI 側で定義されていて、アプリ起動時に評価され、内部的に Pydantic の `Field` に変換される、と考えていい？
+
+**① FastAPI 側で定義されているか → はい。**
+`Query` も `Path` も FastAPI が用意した関数。呼ぶと、制約（`ge=1`, `le=100`）を抱えたオブジェクトが返る。
+
+**② 起動時に評価されるか → はい。**
+`@app.get(...)` が実行される瞬間、つまり Python がファイルを読み込んだ時点。
+
+**③ Pydantic の `Field` に変換されるか → 変換されない。継承関係にあるから。**
+
+`Field()` が返すのは Pydantic の `FieldInfo` というクラスのオブジェクト。
+一方 `Query()` が返す `params.Query` は、その `FieldInfo` を**継承したサブクラス**。
+
+```
+        FieldInfo （Pydantic）      ← Field() が返すのはこれ
+             ▲
+             │ 継承
+        params.Query （FastAPI）    ← Query() が返すのはこれ
+```
+
+継承しているということは、`params.Query` は `FieldInfo` の一種だということ。
+Pydantic から見れば `Query()` が返したものは最初から `FieldInfo` として扱えるので、
+変換する段階が存在しない。

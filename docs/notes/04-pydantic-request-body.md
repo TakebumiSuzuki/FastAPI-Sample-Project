@@ -1,481 +1,309 @@
-# 04. Pydantic v2：リクエストボディと `response_model`
+# 04. Pydantic v2：リクエストボディとレスポンスモデルの完全理解
 
-※ 4-1（リクエストボディ）と 4-2（`response_model`）に、
-4-3（`Field` / バリデータ / `model_config`）と 4-4（入力用・出力用・DB 用の描き分け）を追記済み。
+FastAPI における **Pydantic スキーマ（入力検証・出力制御・スキーマ設計）** についての学習記録と重要ポイントのまとめです。
 
-※ このノート作成後、`schema.py` は `app/schemas.py` に移動・改名した
-（→ `docs/notes/08-settings.md` 以降の構成）。以下の本文は当時の記録のまま残している。
+---
 
-## やったこと
+本章では主に **リクエストボディを受け取るエンドポイント（POST / PUT / PATCH 等）** を中心に、FastAPI と Pydantic がどのように連携してデータを処理するかを扱います。
 
-`schema.py` を新設して Pydantic のクラスを置き、`main.py` に POST エンドポイントを追加した。
+```mermaid
+flowchart TD
+    ClientReq["💻 クライアント<br/>（リクエスト送信）"]
+    
+    subgraph RequestStage["1. HTTP リクエスト（POST / PUT 等）"]
+        Req["リクエスト受信<br/>・JSON 本文（ボディ）<br/>・パス / クエリパラメータ"]
+    end
 
-- 入力用：`name` / `price` / `description` を持つクラス
-- 出力用：`ItemPublic`（`id` / `name` / `price` / `description`）
-- `@app.post("/items", response_model=ItemPublic)` で返す形を宣言
+    subgraph FastAPIPydantic["2. FastAPI / Pydantic の入力処理"]
+        Step0["【0段目】JSON パース検証<br/>（構文不正時は 422）"]
+        Step1["【1段目】引数の割り当て<br/>（BaseModel 型から生成）"]
+        Step2["【2・3段目】型変換 ＆ Field 制約<br/>（型不一致・制約違反時は 422）"]
+        Step3["【4段目】model_validator (after)<br/>（複数項目の相関チェック）"]
+        
+        Step0 --> Step1 --> Step2 --> Step3
+    end
 
-わざと `secret_memo`（社内メモのつもり）を関数から返して、それが外に出ないことを確認した。
+    subgraph AppLogic["3. エンドポイント関数（ビジネスロジック）"]
+        Func["Python 関数の実行<br/>・検証済みデータを受領<br/>・DB 登録やビジネス処理<br/>・辞書 / ORM モデルを返却"]
+    end
 
-## 学んだこと
+    subgraph OutputStage["4. FastAPI の出力処理（response_model）"]
+        OutFilter["レスポンスの整形 ＆ フィルタ<br/>・公開モデルのフィールドのみ抽出<br/>・未定義の機密データを安全に除外<br/>（出力検証失敗時は 500）"]
+    end
 
-### パス／クエリ／ボディの振り分けも型注釈で決まる
+    ClientRes["📱 クライアント<br/>（レスポンス受信 200 OK）"]
 
-```
-item_id: int          → パス or クエリから読む
-item: ItemCreate      → body から読む（BaseModel を継承したクラスだから）
-```
-
-03 章では「引数名がパスの `{}` にあるか」で振り分けられていた。
-ボディの場合はそれに加えて「型注釈が `BaseModel` のサブクラスか」で決まる。
-宣言は要らず、型を書くだけ。
-
-### 検証には JSON パースという 0 段目がある
-
-03 章で見た3段階の手前に、もう一段あった。
-
-```
-[0] 本文を JSON としてパースできるか？ → NG: type "json_invalid"
-[1] 値が届いているか？                 → NG: type "missing"
-[2] 型に変換できるか？                 → NG: type "float_parsing"
-[3] 制約を満たすか？                   → NG: type "greater_than" など
-```
-
-`[0]` で落ちると `loc` が `["body", 34]` のように**数字**になる。
-これは「本文の 34 文字目でパースに失敗した」という意味で、フィールド名すら
-特定できていない状態。`ctx.error` が `"Expecting value"` なら
-「値が来るべき場所に値がない」。
-
-JSON で値になれるのは 文字列（必ずダブルクォート）／数値／`true`／`false`／
-`null`／配列／オブジェクト だけ。裸の `abc` は違反なのでここで落ちる。
-
-### `loc` の構造は path / query / body で共通
-
-```
-03章  ["query", "limit"]     ["path", "item_id"]
-04章  ["body",  "price"]     ["body", "name"]
-        ↑           ↑
-   どこから来たか  どのフィールドか
-```
-
-検証の仕組みは1つしかなく、変わるのは先頭のラベルだけ。
-
-### エラーは1件目で打ち切らず、まとめて返る
-
-`name` を省略しつつ `price` に文字列を入れたら、`missing` と `float_parsing` が
-**同時に** `detail` に入って返ってきた。
-
-03 章で読んだ `routing.py` の流れの通り、検証結果は `errors` という**リストに積む**形で、
-1件目で `raise` しない。積み終えてから空でなければ `RequestValidationError` にする。
-フォームで「1項目ずつ直しては送り直す」必要がないのはこのため。
-
-### `input` の中身は `type` によって指すものが違う
-
-- `float_parsing` の `input` … `"abc"`（問題のあった**値そのもの**）
-- `missing` の `input` … `{"price": "abc", ...}`（送られてきた**ボディ全体**）
-
-`missing` は「値が無い」エラーなので指し示す値が存在しない。
-代わりに「この中に見つからなかった」という**親のオブジェクト**を報告している。
-
-### `response_model` は「返していい形」のフィルタ
-
-```
-   関数が return              serialize_response()          外に出る形
-   {id, name, price,   ──▶   ItemPublic の field.validate  ──▶  {id, name, price,
-    secret_memo}              ├ ItemPublic に有る → 採用          description}
-                              └ 無い(secret_memo) → 捨てる
-```
-
-重要なのは、`secret_memo` は「返さないように書いた」から消えたのではなく、
-**「返していいリストに載っていない」から捨てられた**こと。
-関数側が何を返そうと関係ない。DB のレコードを丸ごと返しても、
-`response_model` に無い列は外に出ない。これが漏洩事故を防ぐ仕組みになる。
-
-実ソース上は `routing.py:317` あたりの `serialize_response()`。
-03 章で見たリクエスト側の検証と**同じ `field.validate()` が方向を変えて使われている**だけで、
-`loc` が `("response",)` になっているのが印。ここで失敗すると 422 ではなく
-500（`ResponseValidationError`）になる。
-
-### 返す形の宣言方法は2つあり、`response_model=` が優先される
-
-```
-① 戻り値注釈    def create_item(...) -> ItemPublic:      ← 公式の推奨
-② 引数で指定    @app.post("/items", response_model=ItemPublic)
-```
-
-`routing.py:1081` に `if isinstance(response_model, DefaultPlaceholder):` という分岐があり、
-**②が明示されているときは①を一切見ない**。
-`response_model=Pub` と `-> dict` を両方書いた小さなアプリを `TestClient` で試したところ、
-レスポンスも OpenAPI スキーマも `Pub` になった。
-
-①が推奨されるのは、FastAPI だけでなく**型チェッカー（Pylance）にも同じ情報が伝わる**から。
-②は FastAPI にしか伝わらない。
-今回②を選んだのは、関数が `ItemPublic` オブジェクトではなく**辞書を返しているため**。
-①で書くと「`ItemPublic` を返すと宣言して `dict` を返している」ことになり、
-`typeCheckingMode: "standard"` の Pylance が警告するはず（未検証）。
-第3部で DB のオブジェクトを返すようになったら①に統一できる。
-
-## `/docs`（Swagger UI）の読み方
-
-1つのエンドポイントの画面は3ブロックに分かれている。
-
-```
-① Parameters       ← 【送る】URL に乗る値の仕様
-② Request body     ← 【送る】本文の仕様。ここを編集して Execute
-─────── Execute を押すと以下が現れる ───────
-③ Curl / Request URL  ← 今の操作を curl に翻訳したもの
-④ Server response  ← 【実際に返ってきたもの】
-⑤ Responses        ← 【返りうる形の"仕様"】実行結果ではない
-```
-
-- **④ Server response**（単数）＝ たった今返ってきた**実物**
-- **⑤ Responses**（複数）＝ 返る**可能性のある形の一覧**。実行前から表示されている
-
-⑤ の `{"detail":[{"loc":["string",0],...}]}` はエラーが起きた表示ではなく、
-「422 のときはこの形で返る」という**説明書**。`"string"` や `0` は型のプレースホルダ。
-
-`Example Value` / `Schema` のトグルは、同じ情報を「例で見るか」「定義で見るか」の違い。
-
-### `{"additionalProp1": {}}` の意味
-
-「中身の決まっていない辞書」を表す Swagger UI の表現（additional property の略）。
-関数の戻り値注釈が `-> dict` だと、FastAPI に「辞書を返す」としか伝わらないのでこうなる。
-`response_model=ItemPublic` を付けると
-`"schema": {"$ref": "#/components/schemas/ItemPublic"}` に変わる。
-
-## 詰まった点・気づき
-
-### JSON を壊して、狙っていたエラーが出せなかった
-
-`price` に文字列を入れる実験のつもりで `"price": abc` とクォート無しで書き、
-`float_parsing` ではなく `json_invalid` が返ってきた。
-`name` を省く実験でも、値だけ消してカンマを残してしまい同じことが起きた。
-**検証の 0 段目で落ちていて、Pydantic まで届いていなかった。**
-`loc` の2番目が文字列（フィールド名）か数字（文字位置）かで見分けられる。
-
-### `/docs` の欄を見間違えた
-
-`response_model` を付けたのに 200 欄が `{"additionalProp1": {}}` のままに見えたが、
-見ていたのは `GET /items/{item_id}` の欄だった（そちらは `-> dict` のまま）。
-`app.openapi()` を直接叩けば、どちらが何になっているか確実に分かる。
-
-```bash
-uv run python -c "from main import app; import json; print(json.dumps(app.openapi(), indent=2))"
+    ClientReq --> Req
+    Req --> Step0
+    Step3 -->|検証成功| Func
+    Func --> OutFilter
+    OutFilter -->|整形済み JSON| ClientRes
 ```
 
 ---
 
-# 4-3. `Field` / バリデータ / `model_config`
+## 2. リクエストボディの受け取りと入力検証
 
-## やったこと
+### ① パス / クエリ / ボディ の自動判別ルール
+FastAPI は関数の引数の**型注釈**を見て、どこからデータを取得するかを自動判別します。
 
-`ItemCreate` に3種類の検証を足した。不正な入力が入り口で弾かれる状態にした。
+| 引数の型注釈 | 取得元 | 判定理由 |
+| :--- | :--- | :--- |
+| `item_id: int` | **パス** または **クエリ** | プリミティブ型（パス定義 `{item_id}` にあればパス、無ければクエリ） |
+| `item: ItemCreate` | **リクエストボディ** | `BaseModel` を継承したクラス型であるため |
 
-## 学んだこと
+### ② 入力検証のステップ（Path / Query / Body の違いと前提）
 
-### `Field` は `Path` / `Query` の親
+FastAPI は、リクエストに含まれる **パスパラメータ**・**クエリパラメータ**・**リクエストボディ** をそれぞれ検証します。
 
-03 章で `Path(ge=1)` と書けたのに `{"price": -100}` が 200 で通ってしまう、という
-ところから始まった。「`Body(gt=0)` と書けばいいのでは」と考えたが書けない。
+特に **POST / PUT / PATCH などでリクエストボディ（JSON）を受け取る場合** は、以下の「0段目」を含む 4 段階の検証が順に実行されます。
 
-```
-item_id: Annotated[int, Path(ge=1)]     ← 値が1個。条件も1個で済む
-item:    Annotated[ItemCreate, Body()]  ← Body が指すのは箱全体。
-                                           箱の中の price には手が届かない
-```
+```mermaid
+flowchart TD
+    subgraph Body["リクエストボディ (POST / PUT 等)"]
+        B0["【0段目】JSON パース検証<br/>・正しい JSON 構文か？"]
+    end
 
-制約は箱の中の各フィールドに付けるしかない。それが `Field`。
+    subgraph URL["パス / クエリ (GET 等)"]
+        U0["URL 文字列を取得<br/>（※0段目はスキップ）"]
+    end
 
-継承関係を実ソースで確認したら、そもそも同じものだった。
+    B0 --> Step1
+    U0 --> Step1
 
-```
-              FieldInfo          ← pydantic。Field() が返すのはこれ
-                  │
-        ┌─────────┴─────────┐
-      Param                Body    ← fastapi が継承。in_ = どこから拾うか
-   ┌────┴────┐
- Path       Query
-```
-
-`fastapi/params.py:26,137,221`。`Path(ge=1).metadata` と
-`pydantic.Field(ge=1).metadata` はどちらも `[Ge(ge=1)]` で同一だった。
-
-**`gt` / `ge` / `min_length` の引数名が両方で同じなのは偶然ではなく、同じ入れ物だから。**
-道具が増えたのではなく、**制約を書く場所が関数の引数からクラスの中に移った**だけ。
-
-### 書く場所の決まり方＝値が URL に乗るか本文に乗るか
-
-```
-POST /items/5?limit=10   ← URL。平らな値しか置けない → 関数の引数（Path/Query）
-{"name": "りんご", ...}   ← 本文。入れ子も配列も置ける → クラスの中（Field）
+    Step1["【1段目】存在チェック (missing)<br/>・必須項目が届いているか？"]
+    --> Step2["【2段目】型変換・パース<br/>・指定の型に変換可能か？"]
+    --> Step3["【3段目】単体 Field 制約<br/>・gt, min_length などの制約検証"]
+    --> Step4["【4段目】相関チェック<br/>・model_validator で複数項目検証"]
+    --> Success["検証成功<br/>（エンドポイント関数へ）"]
 ```
 
-URL は1本の文字列なので構造を持てない。だから関数の引数の並びとそのまま対応する。
-本文は JSON なので引数の並びでは表せず、クラスで形を書く必要がある。
+#### 各ステップの詳細とエラー例
 
-例外はあり、クラスをクエリに使う（`Annotated[F, Query()]`）ことも、
-素の値を本文に使う（`Body(embed=True)`）こともできる。両方 200 を確認した。
+1. **[0段目] JSON パース（※ リクエストボディのみ）**:
+   - **内容**: 送られてきた本文が JSON として正しく解釈できるか。
+   - **失敗例**: `"price": abc`（クォート忘れ）、末尾の余分なカンマ。
+   - **エラー**: `type: "json_invalid"`, `loc: ["body", 34]`（※ まだフィールドを特定できないため、2つ目の要素は「34文字目」という文字位置の数字になる）。
+2. **[1段目] 存在チェック（共通）**:
+   - **内容**: デフォルト値のない必須パラメータが届いているか。
+   - **エラー**: `type: "missing"`（※ `loc` は `["body", "name"]` や `["query", "limit"]` となる。ボディの場合、`input` には親オブジェクト全体が入る）。
+3. **[2段目] 型変換・パース（共通）**:
+   - **内容**: 指定した型（`int`, `float`, `bool` など）に変換できるか。
+   - **エラー**: `type: "float_parsing"` など（※ `input` には問題のあった値 `"abc"` そのものが入る）。
+4. **[3段目] 単体制約チェック（共通）**:
+   - **内容**: `Field(...)`, `Path(...)`, `Query(...)` に設定した `gt`（より大きい）や `min_length` を満たすか。
+   - **エラー**: `type: "greater_than"`, `type: "string_too_short"` など。
 
-### `Field` はデフォルト値の位置を占領する
+> **`loc` の共通ルール**:  
+> エラー発生場所を示す `loc` の先頭には `["body", ...]` / `["query", ...]` / `["path", ...]` が入り、どこから来た値のエラーかが一目で分かります。
 
-```python
-limit: Annotated[int, Query(ge=1)] = 10   # 03章。デフォルトは外
-price: float = Field(default=10.0, gt=0)  # Field はデフォルトの位置に座るので中に書く
-```
-
-`default=` は**キーワードで書く**。位置引数 `Field(None, gt=0)` でも実行時は同じだが、
-Pylance / pyright は `default` がキーワードのときだけ「省略可能」と推論する
-（Pydantic 公式ドキュメントに明記）。このプロジェクトは `typeCheckingMode: "standard"` なので
-キーワードで統一する。
-
-### `Field` は自分1つしか見えない → `model_validator`
-
-セール価格を足したら、`{"price": 100, "sale_price": 200}` が 200 で通った。
-`sale_price: 200` **単体**を見れば `gt=0` を満たしているので `Field` は文句を言えない。
-おかしさは2つのフィールドを**見比べて初めて**分かる。
-
-```python
-@model_validator(mode="after")
-def check_sale_price(self):
-    if self.sale_price is not None and self.sale_price >= self.price:
-        raise ValueError("sale_price must be lower than price")
-    return self
-```
-
-- `self` を受け取れるのがすべて。`Field` にはこれに当たるものがなかった
-- `raise ValueError` が「弾く」、`return self` が「通す」
-- `raise` する例外は **Python 標準の `ValueError`**（`ValueError.__module__` は `builtins`）。
-  特別なのは例外側ではなく、それを捕まえて検証エラーに変換する Pydantic 側。
-  公式によると使えるのは `ValueError` / `AssertionError` / `PydanticCustomError` の3つで、
-  `ValueError` が最も一般的（`AssertionError` は `-O` 実行で assert がスキップされる）
-
-エラーの `loc` は `["body"]` 止まりになる。特定のフィールドではなく**箱全体**に対する
-エラーだから。
-
-### `mode="after"` を使う理由と、`before` の使いどころ
-
-```
-[1] model_validator(mode="before")   ← まだ生の dict。price は "100"（文字列）かも
-[2] field_validator(mode="before")
-[3] 型変換 + Field の制約
-    ★ ここでインスタンスが誕生する
-[4] field_validator(mode="after")
-[5] model_validator(mode="after")    ← self を受け取る
-```
-
-各段に print を仕込んで実行し、この順序を確認した。`gt=0` 違反のときは `[3]` で止まり
-`[4]` `[5]` は呼ばれない。
-
-`after` なら「型が合っていて制約も通った値」を前提に書けるので、比較に余計な防御が要らない。
-公式のフィールド間検証の例（パスワード一致・幅と高さの一致）も全部 `after`。
-
-**インスタンスは `[5]` の前にできている。** `after` が `self` を受け取れる時点で存在している。
-ただし `after` で `raise` すると、できていたインスタンスは呼び出し元に渡らず捨てられる。
-
-`before` は「弾く」より「**検証に通る形に直してから流す**」用途。
-旧クライアントが `price` を `"1,980"` とカンマ区切りで送ってくる場合など、
-`float` 変換の前にカンマを抜く。引数が `self` でなく生の dict なのは、
-インスタンスがまだ存在しない時点だから。
-
-### `model_config` は「知らないフィールドが来たとき」の方針
-
-`sale_price` を `salePrice` と綴り間違えて送っても 200 で通り、**黙って捨てられていた**。
-クライアントは設定できたと思い込み、誰も気づかない。
-`Field` でも validator でも防げない。どちらも「**存在するフィールド**」を検証する道具で、
-「知らないフィールドが**来たこと**」はクラス全体の受け入れ方針の話だから。
-
-```python
-model_config = ConfigDict(extra="forbid")
-```
-
-`extra` は3択。`ignore`（既定・黙って捨てる）/ `forbid`（422）/ `allow`（捨てずに
-`__pydantic_extra__` に保持）。**エラーにするかしないかの軸で独立しているのは `forbid` だけ**で、
-「`allow` の逆」と言うと `ignore` との差が消える。
-
-`forbid` にすると `{"type": "extra_forbidden", "loc": ["body", "salePrice"]}` が返り、
-綴り間違えた名前がそのまま `loc` に出る。クライアントは何を直せばいいか分かる。
-
-選択は用途次第。公式は3択を並べるだけで `forbid` を推奨とは書いていない。判断軸は
-「送り手のミスを教えたいか、送り手の自由を許したいか」。自社フロントが叩くなら `forbid`、
-不特定多数が叩く公開 API なら `ignore` が無難。
-
-## 詰まった点・気づき
-
-### `BaseModel` はメタクラスではない
-
-「`BaseModel` はメタクラスだから挙動が違う」と思っていたが違った。
-
-```
-ModelMetaclass  ← これがメタクラス（クラスを作る側）
-      │ が作る
-BaseModel       ← 普通のクラス
-```
-
-`type(BaseModel)` は `ModelMetaclass`、`isinstance(BaseModel, type)` は `True`。
-挙動が普通と違って見えるのは `ModelMetaclass` の仕業で、クラス定義を読み込む瞬間に
-`name: str = Field(...)` を拾い上げて検証器を組み立ててクラスに埋め込んでいる。
-
-### `model_config` はメタクラスの中には無い
-
-`ConfigDict` の実体は `TypedDict`（`pydantic/config.py:36`）。実行時はただの `dict`。
-`TypedDict` にしてある利点は、`extras` のようなキーの綴り間違いをエディタが指摘できること。
-
-設定が置かれるのは**書いたクラス自身**。
-
-```
-A.model_config = {'extra': 'forbid'}   ← A に書いたものは A に付く
-B.model_config = {}                     ← B は影響を受けない
-ModelMetaclass に model_config はあるか: False
-```
-
-**だから `ItemCreate` に書いても `ItemPublic` には効かない。**
-メタクラスの役割は設定を保持することではなく、クラス定義時にそれを読んで検証器を組むこと。
-
-### `ItemPublic` に業務ルールの validator は書かない
-
-検証の役割が入力側と違う。
-
-```
-ItemCreate が疑う相手 … 外部のクライアント → 弾いたら 422「あなたの入力が悪い」
-ItemPublic が疑う相手 … 自分たち（DB とコード） → 失敗したら 500「サーバーのバグ」
-```
-
-`sale_price >= price` のデータが DB から出てくるなら、それは入り口をすり抜けたか
-DB を直接いじったかで、つまりバグ。出口で握りつぶさず 500 で表面化させ、入り口を直すのが筋。
-
-ただし「DB の値は正しい」は自動では成り立たない。**書き込みは必ず検証済みスキーマを通す**
-という規律を守って初めて成り立つ前提。
+> **ポイント：エラーは1件目で打ち切られず、リストにまとめて返される**  
+> `routing.py` の内部で検証エラーを配列に蓄積してから `RequestValidationError` (422) を投げるため、フォーム送信時などに複数エラーを一度にフロントへ通知できます。
 
 ---
 
-# 4-4. 入力用・出力用・DB 用の描き分け
+## 3. スキーマの検証テクニック（Field / Validator / Config）
 
-## やったこと
-
-`schema.py` を `ItemBase` / `ItemCreate` / `ItemUpdate` / `ItemPublic` の4つに分けた。
-
-## 学んだこと
-
-### 1つのクラスでは両立できないことがある
-
-更新エンドポイントを `ItemCreate` を使い回して作り、`{"name": "みかん"}` を投げたら
-`{"type": "missing", "loc": ["body", "price"]}` で 422。値段を変えないのに `price` を送れと言われる。
-
-`ItemCreate` の `price` が必須なのは「新規登録では必須」という理由で、更新には当てはまらない。
-かといって任意にすれば、今度は**値段のない商品が新規登録できてしまう**。
-
-### 分ける基準は「誰が書き込む値か・誰が読む値か」
-
-```
-                    name  price  id   secret_memo
-Create（登録の入力）  必須   必須   ×        ○
-Update（更新の入力）  任意   任意   ×        ○
-Public（出力）        ○     ○     ○        ×
-DB（テーブル）        ○     ○     ○        ○
-```
-
-`id` が分かりやすい。**登録時にはまだ存在せず**（DB が採番する）、**出力には必要**。
-`ItemCreate` に `id` を書くと「クライアントが id を指定できる」間違った API になる。
-
-### 共通部分は継承でまとめる。ただし Update は継承できない
-
-`model_config` も `model_validator` も子クラスに継承される（実行して確認）。
-だから制約は `ItemBase` に1か所書けば `ItemCreate` / `ItemPublic` に効く。
-
-`ItemUpdate` だけは別に書く。「全フィールドが任意」なので、必須で定義された親を継承しても
-必須のまま。**「必須かどうか」と「制約」は別物**なので、任意にしても `gt=0` は効く
-（03章の「必須／任意を決めるのはデフォルト値の有無」がそのまま当てはまる）。
-
-継承しない代償として、`check_sale_price` も `ItemUpdate` に別途書く必要がある。
-書き忘れると更新経由で価格の逆転を作れてしまう（実際に通ってしまうのを確認した）。
-
-### `float | None` に付けた `gt=0` は None には効かない
-
-```json
-"anyOf": [
-  {"type": "number", "exclusiveMinimum": 0},   ← gt=0 はこの枝にだけ付く
-  {"type": "null"}                              ← 制約なし
-]
-```
-
-2つの枝の選択で、null は別の枝を通るので制約に触れない。
-03章で見た `str | None` → `anyOf[string, null]` と同じ構造。
-
-## 詰まった点・気づき
-
-### 明示的な `null` と「省略」は属性では区別できない
-
-PATCH では `{"sale_price": null}`（セール解除したい）と `{}`（触るな）を区別する必要がある。
-だが両方とも `.sale_price` は `None` になる。
-
-区別は Pydantic が別に記録している `model_fields_set`（**実際に送られてきたフィールド名の集合**）で行う。
-
-```
-{"name":"みかん","sale_price":null} → .sale_price=None  fields_set={'name','sale_price'}
-{"name":"みかん"}                    → .sale_price=None  fields_set={'name'}
-                                          ↑同じ            ↑ここで区別できる
-```
-
-実用上は `model_dump(exclude_unset=True)` を使う。送られてこなかったフィールドが dict から落ちる。
+### ① 単体フィールドの制約：`Field`
+`Path` や `Query` と同様の制約（`gt`, `ge`, `min_length` など）をクラス内のフィールドに指定します。
 
 ```python
-data = item.model_dump(exclude_unset=True)
-for key, value in data.items():
-    setattr(db_item, key, value)      # 送られた項目だけ上書き
+from pydantic import BaseModel, Field
+
+class ItemCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=50)
+    price: float = Field(default=10.0, gt=0)  # default はキーワード引数で書く（型推論のため）
 ```
 
-**`exclude_unset` を付け忘れると、触っていないセール価格が `None` で消える。** 一番の落とし穴。
+> **内部構造のメモ**:  
+> `Path` や `Query` は `fastapi.params.Param` を経由して Pydantic の `FieldInfo` を継承しています。そのため、`gt` や `min_length` などの引数名や内部メタデータは `Field` と全く同じです。
 
-### 「空のリクエストを弾く」を `is None` で書いて失敗した
-
-最初こう書いた。
+### ② 複数フィールドにまたがる相関チェック：`@model_validator(mode="after")`
+「`sale_price` は `price` より安くなければならない」のような、**複数項目を見比べるチェック**には `model_validator` を使います。
 
 ```python
-if self.name is None and self.price is None and self.sale_price is None:
-    raise ValueError("All fields are None")
+from pydantic import BaseModel, model_validator
+
+class ItemCreate(BaseModel):
+    name: str
+    price: float
+    sale_price: float | None = None
+
+    @model_validator(mode="after")
+    def check_sale_price(self):
+        # mode="after" なので、各フィールドの型変換・Field制約を通過した「self」を受け取れる
+        if self.sale_price is not None and self.sale_price >= self.price:
+            raise ValueError("sale_price must be lower than price")
+        return self
 ```
 
-これだと `{"sale_price": null}`（**中身のあるセール解除の要求**）まで弾かれる。
-まさに上で学んだ「省略」と「明示的な null」の区別が消えていた。
+- **`mode="after"`**: 全項目の型変換と `Field` 検証が完了し、インスタンスが生成された後に実行される（安全に `self.field` を扱えるため基本はこちらを使う）。
+- **`mode="before"`**: パース前の生データ（`dict`）を受け取る。カンマ区切りの文字列 `"1,980"` を数値に前処理したい場合などに使用。
+- **例外**: 標準の `ValueError` を `raise` すると、Pydantic が自動で 422 検証エラーに変換してくれる。
+
+### ③ 想定外のフィールドの混入を防ぐ：`model_config`
+クライアントがキー名をスペルミス（例: `sale_price` を `salePrice`）して送った場合、デフォルト（`extra="ignore"`）では**黙って無視**されてしまいます。ミスを確実に弾くには `extra="forbid"` を設定します。
 
 ```python
-if not self.model_fields_set:
-    raise ValueError("no fields to update")
+from pydantic import BaseModel, ConfigDict
+
+class ItemCreate(BaseModel):
+    name: str
+    price: float
+
+    model_config = ConfigDict(extra="forbid")  # 定義されていないキーが来たら 422 エラー
 ```
 
-に変えると意図通りになった。フィールドが増えても条件式を書き足さなくて済む利点もある。
+---
 
-### `ItemUpdate` の validator では `is not None` を先に置く
+## 4. レスポンスの制御：`response_model`
+
+### ① 安全な出力フィルタリング
+エンドポイントに `response_model` を指定すると、関数が返したデータから**定義されたフィールドのみを抽出**してレスポンスを組み立てます。
 
 ```python
-if self.price is not None and self.sale_price is not None and self.sale_price >= self.price:
+@app.post("/items", response_model=ItemPublic)
+def create_item(item: ItemCreate):
+    # DBのレコードや社内用メモを含む辞書を返しても……
+    return {
+        "id": 1,
+        "name": item.name,
+        "price": item.price,
+        "secret_memo": "社内機密情報",  # ItemPublic に無ければクライアントには返らない！
+    }
 ```
 
-`{"sale_price": 200}` だけ送られたとき、これがないと `None >= 200` で `TypeError` になる。
-なおこの形は `price` を知らないので判定不能で、通ってしまう。
-**完全な検証には DB の現在値と突き合わせる必要があり、それは crud 層の仕事**（第3部）。
+- **漏洩防止の防壁**: DBモデルや内部データをそのまま return しても、`ItemPublic` に定義のない列は外に出ません。
+- **500 エラー**: 出力側の検証に失敗した場合はクライアントの責任ではないため、422 ではなく **500 Internal Server Error**（`ResponseValidationError`）になります。
 
-### Zod と比べて Pydantic が冗長なのは事実
+### ② 宣言方法の2つの書き方（`-> ItemPublic` vs `response_model=`）
 
-Zod には派生スキーマを作る演算子がある（公式ドキュメントで確認）。
+出力スキーマを宣言する方法には **「関数の戻り値型注釈」** と **「デコレータ引数」** の2通りがあります。
 
-```typescript
-const ItemUpdate = ItemBase.partial();               // 全部を任意に
-const ItemPublic = ItemBase.extend({ id: z.number() });
-ItemBase.pick({...}) / ItemBase.omit({...})
+```python
+# パターン A: 戻り値の型注釈（公式推奨）
+@app.get("/items/{item_id}")
+def get_item(item_id: int) -> ItemPublic:
+    ...
+
+# パターン B: デコレータの引数指定
+@app.get("/items/{item_id}", response_model=ItemPublic)
+def get_item(item_id: int):
+    ...
 ```
 
-`ItemUpdate` で4フィールド分の `default=None` を手書きしたところが `.partial()` の一語で済む。
-Pydantic に相当する公式メソッドはない（`create_model` で動的生成はできるが程遠い）。
+#### FastAPI としての機能は「完全に同じ」
+どちらの書き方をしても、FastAPI の内部では全く同じ処理が行われます。
+1. **不要データの除外**: 定義外のフィールド（`secret_memo` 等）の安全な削ぎ落とし
+2. **データの型変換・検証**: 出力データのシリアライズ（失敗時は 500 エラー）
+3. **Swagger UI への反映**: `/docs` のレスポンススキーマへの `ItemPublic` の反映
 
-差の理由は作り方の違い。
+#### 違いは「Python（型チェッカー・エディタ）にどう伝わるか」
 
+| 宣言方法 | 伝える相手 | メリット | 注意点（不便な点） |
+| :--- | :--- | :--- | :--- |
+| **パターン A**<br>`-> ItemPublic`<br>（公式推奨） | **FastAPI** と **型チェッカー**（Pylance/MyPy）の両方 | エディタのコード補完が効き、OpenAPI も自動生成される。 | 関数内で ORM モデル（`Item`）や `dict` をそのまま return すると、**型チェッカーに「型不一致」と怒られる**（手動で `ItemPublic.model_validate(db_item)` などが必要）。 |
+| **パターン B**<br>`response_model=ItemPublic` | **FastAPI だけ** | 関数から `dict` や ORM モデルを返しても型チェッカーに怒られない。 | Python の型チェッカーには戻り値の型情報が伝わらない（`Any` 扱い）。 |
+| **⭐ ベストプラクティス**<br>`response_model=ItemPublic` ＋ `-> Item` (ORM型) | **FastAPI** と **型チェッカー** の両方に正確な役割分担 | **型チェッカーは ORM の返却として完全検証**され、**FastAPI は `ItemPublic` で安全に出力変換・OpenAPI 生成**を行う。実務で最も安全かつ快適な書き方。 | デコレータ引数と型注釈の両方を書く必要がある。 |
+
+#### どう使い分けるべきか？
+- **DB (ORM) を使ってオブジェクトをそのまま返す場合（実務の王道）**:  
+  ```python
+  @app.get("/items/{item_id}", response_model=ItemPublic)
+  def get_item(item_id: int) -> Item:  # Item は SQLAlchemy などの ORM クラス
+      db_item = db.query(Item).filter(Item.id == item_id).first()
+      return db_item  # 型チェッカーも FastAPI も完璧に動作する！
+  ```
+  ※ `ItemPublic` には `model_config = ConfigDict(from_attributes=True)` が必要です。
+- **Pydantic モデルに手動変換して返す場合**:  
+  `return ItemPublic.model_validate(db_item)` と書くなら、`def get_item(...) -> ItemPublic:` で OK。
+- **辞書（`dict`）を手動で組み立てて返す場合**:  
+  `@app.get(..., response_model=ItemPublic)` で `def get_item(...) -> dict:` または型注釈省略。
+
+※ 両方同時に書いた場合は、FastAPI のスキーマ・シリアライズには `response_model=` の指定が優先されます。
+
+---
+
+## 5. 実践的なスキーマ設計（入力用・出力用・更新用の描き分け）
+
+用途ごとにスキーマを分離するのが FastAPI / Pydantic のベストプラクティスです。
+
+### ① スキーマを分ける理由
 ```
-Zod       スキーマが「値」  → 加工する関数が自然に書ける。TS 型は z.infer で導出
-Pydantic  スキーマが「クラス」→ 加工手段が継承しかない
+                  name    price     id     secret_memo
+Create（登録）    必須    必須      × (不要)     ○ (任意入力)
+Update（更新）    任意    任意      × (不要)     ○ (任意入力)
+Public（出力）    ○       ○         ○ (必須)     × (漏洩防止で除外)
+DB テーブル       ○       ○         ○ (主キー)   ○ (保存)
+```
+- **新規登録（Create）**: `id` は DB が自動採番するため入力には含めない。
+- **一部更新（Update）**: 変更したい項目だけ送るため、全フィールドを `None` 許容（任意）にする。
+- **出力（Public）**: 採番された `id` を含め、社内用の `secret_memo` を除外する。
+
+### ② 継承を使った設計パターン
+```python
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+# 共通基底クラス（バリデーションや設定を一括定義）
+class ItemBase(BaseModel):
+    name: str = Field(min_length=1, max_length=50)
+    price: float = Field(gt=0)
+    model_config = ConfigDict(extra="forbid")
+
+# 1. 登録用（Base をそのまま継承）
+class ItemCreate(ItemBase):
+    secret_memo: str | None = None
+
+# 2. 出力用（id を追加）
+class ItemPublic(ItemBase):
+    id: int
+
+# 3. 更新用（全フィールドを任意にするため個別定義）
+class ItemUpdate(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=50)
+    price: float | None = Field(default=None, gt=0)
+    sale_price: float | None = Field(default=None, gt=0)
+    secret_memo: str | None = None
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="after")
+    def check_at_least_one_field_and_price(self):
+        # 何も更新対象が送られてこなかったら弾く
+        if not self.model_fields_set:
+            raise ValueError("At least one field must be provided for update")
+        
+        # 値が存在する場合のみ相関チェック（None >= 数値 の TypeError を防ぐ）
+        if self.price is not None and self.sale_price is not None:
+            if self.sale_price >= self.price:
+                raise ValueError("sale_price must be lower than price")
+        return self
 ```
 
-ただし Pydantic 側の見返りもある。型注釈がそのまま Python の型なので Pylance が
-追加の仕掛けなしに理解する（Zod は `z.infer<typeof X>` が要る）。validator をメソッドとして
-クラス内に書けて継承もされる。FastAPI が同じクラスから OpenAPI を生成する。
-**「派生の作りやすさ」は Zod、「型システムとの一体感・振る舞いの持たせやすさ」は Pydantic** という
-トレードオフ。
+---
+
+## 6. 実装時の重要ポイント・落とし穴（Tips）
+
+### ① PATCH 更新時の「未送信」と「明示的な null」の区別
+- `{}`（変更なし）と `{"sale_price": null}`（セール解除）は、Python 上ではどちらも `item.sale_price is None` になります。
+- これを正しく区別して更新するには、`item.model_dump(exclude_unset=True)` を使います。
+  - `model_fields_set`: 実際にリクエストに含まれていたフィールド名の集合。
+  - `exclude_unset=True`: 送られてこなかったフィールドを除外して辞書化する。
+
+```python
+# 送られてきた項目だけを安全に DB レコードへ反映する
+update_data = item.model_dump(exclude_unset=True)
+for key, value in update_data.items():
+    setattr(db_item, key, value)
+```
+
+### ② `/docs`（Swagger UI）の正しい読み方
+- **`Request body`**: リクエスト送信用の入力欄。
+- **`Server response`（単数）**: 「Execute」実行後に**実際にサーバーから返ってきた結果**。
+- **`Responses`（複数）**: 返り得る HTTP ステータスコードと**スキーマ定義（仕様書）**。実行前から表示されている。
+- **`{"additionalProp1": {}}` の表示**:
+  - 関数の戻り値が `-> dict` などの汎用型になっていると表示される。
+  - `response_model=ItemPublic` などを正しく指定すると、具体的なスキーマ構造が表示されるようになる。
+
+### ③ Pydantic と TypeScript (Zod) の設計思想の違い
+- **Zod**: スキーマが「値（オブジェクト）」なので、`ItemBase.partial()` や `.omit()` などの関数合成・派生が手軽に行える。
+- **Pydantic**: スキーマが「クラス」として定義されるため、派生スキーマを作る際はクラス継承や再定義が必要になる。その代わり、Python 標準の型ヒントやエディタの静的解析（Pylance 等）と自然に統合されるメリットがある。
