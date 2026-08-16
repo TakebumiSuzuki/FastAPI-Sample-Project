@@ -1,10 +1,10 @@
 from collections.abc import Generator
 from typing import Annotated
 
-from app.db.session import SessionLocal
-
 from fastapi import Query
 from sqlalchemy.orm import Session
+
+from app.db.session import SessionLocal
 
 
 class CommonQueryParams:
@@ -17,10 +17,9 @@ class CommonQueryParams:
         self.limit = limit
 
 
-def get_db_session() -> Generator[Session, None, None]:
+def get_db_session() -> Generator[Session]:
     db = SessionLocal()
     try:
         yield db
     finally:
         db.close()
-        

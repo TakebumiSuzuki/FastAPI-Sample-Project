@@ -1,9 +1,13 @@
 from decimal import Decimal
+from typing import TYPE_CHECKING
 
-from sqlalchemy import Numeric, String, ForeignKey
+from sqlalchemy import ForeignKey, Numeric, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
+
+if TYPE_CHECKING:
+    from app.models.category import Category
 
 
 class Item(Base):
@@ -16,5 +20,5 @@ class Item(Base):
     description: Mapped[str | None] = mapped_column(String(5000))
     secret_memo: Mapped[str | None] = mapped_column(String(1000))
     category_id: Mapped[int] = mapped_column(ForeignKey("categories.id"))
-    
+
     category: Mapped["Category"] = relationship("Category", back_populates="items")

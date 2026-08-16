@@ -1,11 +1,10 @@
 from logging.config import fileConfig
-from app.core.config import get_settings
-from app.models.base import Base
-import app.models
-from sqlalchemy import engine_from_config
-from sqlalchemy import pool
+
+from sqlalchemy import engine_from_config, pool
 
 from alembic import context
+from app.core.config import get_settings
+from app.models.base import Base
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -28,6 +27,7 @@ target_metadata = Base.metadata
 # ... etc.
 
 config.set_main_option("sqlalchemy.url", get_settings().database_url)
+
 
 def run_migrations_offline() -> None:
     """Run migrations in 'offline' mode.
@@ -69,8 +69,7 @@ def run_migrations_online() -> None:
 
     with connectable.connect() as connection:
         context.configure(
-            render_as_batch=True,
-            connection=connection, target_metadata=target_metadata
+            render_as_batch=True, connection=connection, target_metadata=target_metadata
         )
 
         with context.begin_transaction():

@@ -1,13 +1,13 @@
 from collections.abc import Sequence
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Body
+from fastapi import APIRouter, Body, Depends
 from sqlalchemy.orm import Session
 
-from app.crud.category import get_categories as crud_get_categories
+from app.crud import category as crud
 from app.deps import get_db_session
 from app.models.category import Category
-from app.schemas import CategoryPublic, CategoryCreate
+from app.schemas import CategoryCreate, CategoryPublic
 
 router = APIRouter(prefix="/categories", tags=["categories"])
 
@@ -16,7 +16,7 @@ router = APIRouter(prefix="/categories", tags=["categories"])
 def get_categories(
     db: Annotated[Session, Depends(get_db_session)],
 ) -> Sequence[Category]:
-    categories = crud_get_categories(db=db)
+    categories = crud.get_categories(db=db)
     return categories
 
 
@@ -24,7 +24,7 @@ def get_categories(
 def create_category(
     new_category: Annotated[CategoryCreate, Body()],
     db: Annotated[Session, Depends(get_db_session)],
-):
+) -> Category:
     category = Category(name=new_category.name)
     db.add(category)
     db.commit()

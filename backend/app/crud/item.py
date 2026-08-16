@@ -1,3 +1,5 @@
+from collections.abc import Sequence
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload
 
@@ -17,7 +19,7 @@ def get_item_by_name(db: Session, item_name: str) -> Item | None:
     return item
 
 
-def get_items(db: Session, skip: int = 0, limit: int = 10) -> list[Item]:
+def get_items(db: Session, skip: int = 0, limit: int = 10) -> Sequence[Item]:
     stmt = select(Item).offset(skip).limit(limit).options(joinedload(Item.category))
     items = db.execute(stmt).scalars().all()
     return items
