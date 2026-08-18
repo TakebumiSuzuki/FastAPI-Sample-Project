@@ -1,6 +1,6 @@
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Integer, String
+from sqlalchemy import CheckConstraint, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
@@ -16,3 +16,5 @@ class Category(Base):
     name: Mapped[str] = mapped_column(String(30))
 
     items: Mapped[list["Item"]] = relationship("Item", back_populates="category")
+
+    __table_args__ = (CheckConstraint("length(name) >= 3", name="name_min_length_3"),)

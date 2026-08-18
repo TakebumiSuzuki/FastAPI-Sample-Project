@@ -60,7 +60,8 @@ def update_item(
 
 @router.delete("/{item_id}", status_code=204)
 def delete_item(
-    db: Annotated[Session, Depends(get_db_session)], item_id: Annotated[int, Path()]
+    db: Annotated[Session, Depends(get_db_session)],
+    item_id: Annotated[int, Path()],
 ) -> None:
     item = crud.get_item_from_id(db=db, item_id=item_id)
     if item is None:
