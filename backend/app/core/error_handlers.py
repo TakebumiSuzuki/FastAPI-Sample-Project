@@ -42,13 +42,11 @@ JSONResponse(
     status_code=200,
     headers=None,            # 追加したいヘッダーの dict
     media_type=None,         # 既定は "application/json"
-    background=None,         # BackgroundTask（レスポンス送信後に走らせる処理）
+    background=None,         # BackgroundTask(レスポンス送信後に走らせる処理)
 )
-
 - content は json.dumps にそのまま渡されるので、
 dict / list / str / int / bool / None など標準で JSON にできる値に限られる。
 (datetime や Pydantic モデルをそのまま入れるとエラー）
-
 """
 
 

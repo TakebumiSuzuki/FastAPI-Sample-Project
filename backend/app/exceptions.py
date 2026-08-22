@@ -1,7 +1,14 @@
 from fastapi import HTTPException
 
+# FastAPI の HTTPExceptionが持つ属性は以下の３つ
+# self.status_code
+# self.detail # 型は Any
+# self.headers # 未指定なら None
+
 
 class ItemNotFound(HTTPException):
+    # code はこのクラスそのものと紐づいた値。よってクラス変数として定義する。
+    # そして同名のインスタンス変数がないので、この値が self.codeで取り出せる。
     code = "item_not_found"
 
     def __init__(self, item_id: int):

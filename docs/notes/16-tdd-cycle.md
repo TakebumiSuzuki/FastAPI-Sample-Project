@@ -7,7 +7,7 @@ TDD の **Red(失敗するテストを書く)→ Green(通す)→ Refactor(整�
 ### GET /categories
 
 - `backend/tests/test_categories.py`(Red): `client` / `db_session` フィクスチャを使い、カテゴリを2件作成 → `GET /categories` を叩いて件数と内容を検証するテストを先に書いた。
-- `backend/app/crud/category.py`(Green): `get_categories(db)` で `select(Category)` の結果一覧を返す。
+- `backend/app/crud/category.py`(Green): `get_categories(db_session)` で `select(Category)` の結果一覧を返す。
 - `backend/app/routes/categories.py`(Green): `APIRouter(prefix="/categories")` に `GET ""` を追加し、`crud.get_categories` を呼んで返す。
 - `backend/main.py`(Green): `categories_router` を `include_router` で登録。
 - Refactor: 既存の `items` 側の実装とパターンが揃っており、今回は整える箇所なし。

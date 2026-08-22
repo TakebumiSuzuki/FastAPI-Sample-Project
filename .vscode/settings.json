@@ -114,5 +114,7 @@
   "python-envs.defaultEnvManager": "ms-python.python:system",
 
   "editor.hover.enabled": "off",
-  "gitlens.hovers.enabled": false
+  "gitlens.hovers.enabled": false,
+  "gitlens.currentLine.enabled": false,
+  "gitlens.codeLens.enabled": false
 }

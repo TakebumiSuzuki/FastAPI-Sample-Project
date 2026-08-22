@@ -1,13 +1,13 @@
 # SQLAlchemy のセッションとトランザクション管理のノート
 
 ## 1. Session の設定
-- **`autocommit=False`（推奨）**：トランザクションを確定させるには明示的に `db.commit()` を呼ぶ必要がある。意図せず未コミットの変更が残ることを防ぎ、データの整合性を保つ。
+- **`autocommit=False`（推奨）**：トランザクションを確定させるには明示的に `db_session.commit()` を呼ぶ必要がある。意図せず未コミットの変更が残ることを防ぎ、データの整合性を保つ。
 - **`autoflush=False`（推奨）**：クエリの前に、メモリ上の変更が自動で DB へ送られる（フラッシュされる）のを止める。いつ DB へ変更を押し出すかを自分で明示的に制御できる。
 
 ---
 
-## 2. `db.flush()` を使う場面
-`db.flush()` は、保留中の SQL 命令（`INSERT` / `UPDATE` / `DELETE`）を、コミットせずに現在のトランザクションの中で DB へ送る。
+## 2. `db_session.flush()` を使う場面
+`db_session.flush()` は、保留中の SQL 命令（`INSERT` / `UPDATE` / `DELETE`）を、コミットせずに現在のトランザクションの中で DB へ送る。
 
 ### 典型的な使いどころ
 1. **自動採番された ID を取得する**：子レコードを作る前に、DB が生成した主キー（`AUTO_INCREMENT`）を受け取る。
@@ -21,7 +21,7 @@
 ### トランザクションのライフサイクル（遅延 BEGIN）
 - **Session の生成時**：DB のトランザクションは開始**されない**。
 - **最初の DB 操作時**（`SELECT`、`flush()` など）：内部で自動的に `BEGIN` が発行される。
-- **`db.commit()` / `db.rollback()`**：トランザクションを確定させ、終了する。
+- **`db_session.commit()` / `db_session.rollback()`**：トランザクションを確定させ、終了する。
 
 ### ロックと MVCC
 現代の RDBMS は次の原則に従う：**「読み手は書き手をブロックせず、書き手は読み手をブロックしない。しかし書き手同士はブロックし合う」**
@@ -39,8 +39,8 @@ SQLAlchemy の `Session` は **Unit of Work（作業単位）パターン** を�
 
 ### ① 書き込み系操作（`add` / 属性変更 / `delete`）
 * **メソッド実行時:** DB への SQL 送信は**一切行われません**。SQLAlchemy のメモリ上（Session 内部）に変更予定・追加予定としてオブジェクトの状態が記録（追跡）されるだけです。
-* **`db.commit()` 実行時:**
-  1. 内部で自動的に **`db.flush()`** が実行され、溜まっていた `INSERT` / `UPDATE` / `DELETE` の SQL が DB へ一括送信されます。
+* **`db_session.commit()` 実行時:**
+  1. 内部で自動的に **`db_session.flush()`** が実行され、溜まっていた `INSERT` / `UPDATE` / `DELETE` の SQL が DB へ一括送信されます。
   2. その直後に DB へ **`COMMIT`** の SQL が送信され、データの永続化とトランザクションのクローズ（終了）が同時に行われます。
 * *(※補足)* `autoflush=True` の場合、`commit()` 前であっても途中で `SELECT` が実行されると、データの整合性を保つために未送信の変更 SQL が自動で先行フラッシュ（送信）されますが、`COMMIT` はされずトランザクションは継続します。
 
@@ -48,13 +48,13 @@ SQLAlchemy の `Session` は **Unit of Work（作業単位）パターン** を�
 * **メソッド実行時（`session.execute(select(...))` 等）:** 今すぐデータを取得して Python オブジェクトを構築する必要があるため、**即座に `SELECT` クエリが DB へ送信** されます（初回であれば裏で自動的に `BEGIN` が発行されます）。
 * **クエリ実行後:** データの取得が終わっても、SQLAlchemy は**トランザクションを自動で閉じません（終了 SQL は送りません）**。後続のクエリや更新処理に備えて、DB 側は **`idle in transaction`（トランザクション継続待機中）** の状態のまま維持されます。
 * **トランザクションが閉じるタイミング:**
-  * 明示的に `db.commit()` または `db.rollback()` を呼んだ時。
-  * リクエスト終了時（FastAPI の `finally` 等）で **`db.close()`** が呼ばれた時に、裏で **`ROLLBACK`** が送信されて安全にトランザクションが終了（クローズ）し、接続がプールへ返却されます。
+  * 明示的に `db_session.commit()` または `db_session.rollback()` を呼んだ時。
+  * リクエスト終了時（FastAPI の `finally` 等）で **`db_session.close()`** が呼ばれた時に、裏で **`ROLLBACK`** が送信されて安全にトランザクションが終了（クローズ）し、接続がプールへ返却されます。
 
 ### 早見表
 
 | 操作 | 実行時の SQL 送信タイミング | トランザクション終了（クローズ）のタイミング |
 | :--- | :--- | :--- |
-| **`db.add()` / 属性変更 / `db.delete()`** | **すぐには送信されない**（メモリに蓄積）<br>※`flush()` または `commit()` 時に一括送信 | **`commit()` を呼んだ瞬間** に `COMMIT` が送信されて終了 |
-| **`db.execute(select(...))`** | **即座に送信される** | **すぐには終了しない**（`idle in transaction` を維持）<br>※リクエスト末尾の `db.close()`（または `commit`/`rollback`）で終了 |
+| **`db_session.add()` / 属性変更 / `db_session.delete()`** | **すぐには送信されない**（メモリに蓄積）<br>※`flush()` または `commit()` 時に一括送信 | **`commit()` を呼んだ瞬間** に `COMMIT` が送信されて終了 |
+| **`db_session.execute(select(...))`** | **即座に送信される** | **すぐには終了しない**（`idle in transaction` を維持）<br>※リクエスト末尾の `db_session.close()`（または `commit`/`rollback`）で終了 |
 

@@ -18,8 +18,8 @@ class CommonQueryParams:
 
 
 def get_db_session() -> Generator[Session]:
-    db = SessionLocal()
+    db_session = SessionLocal()
     try:
-        yield db
+        yield db_session
     finally:
-        db.close()
+        db_session.close()

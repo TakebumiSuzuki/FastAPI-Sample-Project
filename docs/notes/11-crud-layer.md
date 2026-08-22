@@ -14,8 +14,8 @@
 
 ## 2. SQLAlchemy 2.0 クエリの内部挙動と Q&A（重要）
 
-### Q1. `db.execute(stmt)` 実行直後、データはどこでどうなっている？
-- **答え**: `db.execute(stmt)` が完了した時点で、DB からのレスポンス受信・`Item` オブジェクトのインスタンス化・SQLAlchemy `Session` への登録まで完了している。
+### Q1. `db_session.execute(stmt)` 実行直後、データはどこでどうなっている？
+- **答え**: `db_session.execute(stmt)` が完了した時点で、DB からのレスポンス受信・`Item` オブジェクトのインスタンス化・SQLAlchemy `Session` への登録まで完了している。
 - データの場所は **アプリケーション（Python）メモリ上の SQLAlchemy `Session` 内**。
 
 ### Q2. なぜ `execute()` の結果はタプルで包まれているの？
@@ -55,8 +55,8 @@
 ### ① `create_item` におけるデータ受け渡しとレスポンス
 - **引数の設計**: 単体の `name: str` ではなく、ルーターでバリデーション済みの Pydantic スキーマ `item_in: ItemCreate` を受けるのが標準的。
 - **ORM化**: `Item(**item_in.model_dump())` で一括辞書展開して ORM インスタンス化する。
-- **`db.refresh(obj)` の要不要**: 
-  - `db.commit()` 直後に `db.refresh(obj)` を呼ぶと DB 側の最新状態（自動発番 `id` など）を明示的に同期できる。
+- **`db_session.refresh(obj)` の要不要**: 
+  - `db_session.commit()` 直後に `db_session.refresh(obj)` を呼ぶと DB 側の最新状態（自動発番 `id` など）を明示的に同期できる。
   - ただし、デフォルト設定（`expire_on_commit=True`）では属性アクセス時に遅延ロードで自動取得されるため省略可能。
 
 ### ② `update_item` でのハマりどころ（SQLAlchemy の低レイヤーな側面）
@@ -91,7 +91,7 @@
 ### ⑤ `DELETE /items/{item_id}` と 204 No Content
 - **`status_code=204`**: レスポンスボディを伴わない成功レスポンスとして 204 No Content を明示指定。
 - **`if item is None:`**: Python 標準のイディオムに従い、データが存在しない場合は 404 (`ItemNotFound`) を raise する。
-- **`crud_delete_item(db=db, db_item=item)`**: ルーターで存在確認済みの ORM オブジェクトを渡し、CRUD 層で `db.delete(db_item)` および `db.commit()` を呼び出して削除を確定する。
+- **`crud_delete_item(db_session=db_session, db_item=item)`**: ルーターで存在確認済みの ORM オブジェクトを渡し、CRUD 層で `db_session.delete(db_item)` および `db_session.commit()` を呼び出して削除を確定する。
 
 ---
 

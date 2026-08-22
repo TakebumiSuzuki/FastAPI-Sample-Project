@@ -14,18 +14,18 @@ router = APIRouter(prefix="/categories", tags=["categories"])
 
 @router.get("", response_model=list[CategoryPublic])
 def get_categories(
-    db: Annotated[Session, Depends(get_db_session)],
+    db_session: Annotated[Session, Depends(get_db_session)],
 ) -> Sequence[Category]:
-    categories = crud.get_categories(db=db)
+    categories = crud.get_categories(db_session=db_session)
     return categories
 
 
 @router.post("", response_model=CategoryPublic, status_code=201)
 def create_category(
     new_category: Annotated[CategoryCreate, Body()],
-    db: Annotated[Session, Depends(get_db_session)],
+    db_session: Annotated[Session, Depends(get_db_session)],
 ) -> Category:
     category = Category(name=new_category.name)
-    db.add(category)
-    db.commit()
+    db_session.add(category)
+    db_session.commit()
     return category

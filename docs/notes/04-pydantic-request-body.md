@@ -211,7 +211,7 @@ def get_item(item_id: int):
   ```python
   @app.get("/items/{item_id}", response_model=ItemPublic)
   def get_item(item_id: int) -> Item:  # Item は SQLAlchemy などの ORM クラス
-      db_item = db.query(Item).filter(Item.id == item_id).first()
+      db_item = db_session.query(Item).filter(Item.id == item_id).first()
       return db_item  # 型チェッカーも FastAPI も完璧に動作する！
   ```
   ※ `ItemPublic` には `model_config = ConfigDict(from_attributes=True)` が必要です。
