@@ -1,3 +1,5 @@
+# core/ の基準は「使用範囲の広さ」ではなく「アプリの起動時に一度だけ組み立てる土台」
+# と考えると、このファイルを core の中に入れても良いと言うのが claude の意見
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -14,4 +16,3 @@ SessionLocal = sessionmaker(
     autoflush=False,
     bind=engine,
 )
-

@@ -120,7 +120,7 @@
 - `sessionmaker` / `Session` のライフサイクル
 - `yield` 依存でリクエストごとにセッションを開いて閉じる
 - コミットとロールバックをどこで行うか
-- `app/db/session.py` と `app/api/deps.py` の連携
+- `app/core/session.py` と `app/api/deps.py` の連携
 
 **できるようになること**：DB 接続が漏れない構造を説明できる
 

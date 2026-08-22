@@ -112,4 +112,7 @@
       "editor.defaultFormatter": "esbenp.prettier-vscode"
   },
   "python-envs.defaultEnvManager": "ms-python.python:system",
+
+  "editor.hover.enabled": "off",
+  "gitlens.hovers.enabled": false
 }

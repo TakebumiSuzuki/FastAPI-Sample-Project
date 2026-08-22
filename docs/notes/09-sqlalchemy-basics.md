@@ -5,9 +5,9 @@
 - `uv add sqlalchemy` で SQLAlchemy 2.0.51 を追加した
 - `.env` / `Settings` に `DATABASE_URL` を足し、接続文字列をコードに直書きしない形にした
 - `app/models/base.py` に `Base`、`app/models/item.py` に `Item` テーブル定義を書いた
-- `app/db/session.py` に `engine` を作った
+- `app/core/session.py` に `engine` を作った
 - `Base.metadata.create_all(engine)` で `backend/app.db` を生成し、DB 側の実物を `inspect()` で確認した
-- `app/`・`app/core/`・`app/routes/`・`app/models/`・`app/db/` に `__init__.py` を置いた
+- `app/`・`app/core/`・`app/routes/`・`app/models/` に `__init__.py` を置いた
 
 ---
 
@@ -36,7 +36,7 @@ class Item(Base):
 ```
 
 ```python
-# app/db/session.py
+# app/core/session.py
 engine = create_engine(
     get_settings().database_url,
     connect_args={"check_same_thread": False},
@@ -138,6 +138,45 @@ if l_args:
 
 静的な型判別ではなく `isinstance` による動的な振り分け。
 
+書き分けは次の5通り（実行して DDL を確認）。
+
+```python
+class Demo(Base):
+    __tablename__ = "demo"
+
+    # 1) 何も渡さない … 列名=属性名、型=Mapped[] から
+    id: Mapped[int] = mapped_column(primary_key=True)
+
+    # 2) 型だけ … 1番目が str でないので「型」と判定される
+    name: Mapped[str] = mapped_column(String(50))
+
+    # 3) 列名だけ … 1番目が str なので「列名」と判定され、型は Mapped[] から
+    memo: Mapped[str] = mapped_column("memo_text")
+
+    # 4) 両方 … 1番目=列名、2番目=型
+    price: Mapped[Decimal] = mapped_column("unit_price", Numeric(10, 2))
+
+    # 5) キーワードで明示（位置引数を使わない書き方）
+    note: Mapped[str] = mapped_column(name="note_col", type_=String(20))
+```
+
+生成される DDL：
+
+```sql
+CREATE TABLE demo (
+	id INTEGER NOT NULL,
+	name VARCHAR(50) NOT NULL,
+	memo_text VARCHAR NOT NULL,
+	unit_price NUMERIC(10, 2) NOT NULL,
+	note_col VARCHAR(20) NOT NULL,
+	PRIMARY KEY (id)
+)
+```
+
+3) と 4) のように列名を指定しても、Python 側の属性名は `memo` / `price` のまま
+（`d.memo` でアクセスできることを実行して確認）。列名だけ変えたいのは、DB の命名規則に
+合わせつつ Python では別名で扱いたいとき。
+
 ### `check_same_thread: False` が要る理由
 
 SQLite は既定で「接続を作ったスレッド以外からの使用」を拒否する。一方 FastAPI は
@@ -191,10 +230,10 @@ FastAPI 公式チュートリアルにも「1つのリクエストが複数の�
 
 - `backend/app/models/base.py`：`Base`（新規）
 - `backend/app/models/item.py`：`Item` テーブル定義（新規）
-- `backend/app/db/session.py`：`engine`（新規）
+- `backend/app/core/session.py`：`engine`（新規）
 - `backend/app/core/config.py`：`database_url` を追加
 - `backend/.env` / `.env.example`：`DATABASE_URL` を追加
-- `backend/app/{,core/,routes/,models/,db/}__init__.py`：空ファイルを追加
+- `backend/app/{,core/,routes/,models/}__init__.py`：空ファイルを追加
 - `backend/pyproject.toml`：`sqlalchemy>=2.0.51`
 
 ---

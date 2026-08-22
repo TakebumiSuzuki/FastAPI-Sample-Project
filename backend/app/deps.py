@@ -4,7 +4,7 @@ from typing import Annotated
 from fastapi import Query
 from sqlalchemy.orm import Session
 
-from app.db.session import SessionLocal
+from app.core.session import SessionLocal
 
 
 class CommonQueryParams:

@@ -18,6 +18,6 @@ dev = [
     "pytest>=9.1.1",
 ]
 
-
+# pytest が自動で sys.path に足すのは cwd ではなく「テストファイルが置かれているディレクトリ」なので以下の設定が必要。
 [tool.pytest.ini_options]
-    pythonpath = ["."]
+pythonpath = ["."]

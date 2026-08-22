@@ -2,9 +2,10 @@ import logging
 import re
 
 from fastapi import FastAPI, Request
-from fastapi.exceptions import HTTPException, RequestValidationError
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import IntegrityError
+from starlette.exceptions import HTTPException
 
 logger = logging.getLogger(__name__)
 
@@ -35,10 +36,29 @@ def _lookup_constraint(exc: IntegrityError) -> tuple[int, str] | None:
     return None
 
 
+"""
+JSONResponse(
+    content,                 # 必須。JSON にする中身。これ以外は省略可
+    status_code=200,
+    headers=None,            # 追加したいヘッダーの dict
+    media_type=None,         # 既定は "application/json"
+    background=None,         # BackgroundTask（レスポンス送信後に走らせる処理）
+)
+
+- content は json.dumps にそのまま渡されるので、
+dict / list / str / int / bool / None など標準で JSON にできる値に限られる。
+(datetime や Pydantic モデルをそのまま入れるとエラー）
+
+"""
+
+
 def register_error_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(HTTPException)
-    async def http_exception_handler(request: Request, exc: HTTPException):
+    async def http_exception_handler(
+        request: Request,
+        exc: HTTPException,
+    ):
         return JSONResponse(
             status_code=exc.status_code,
             content={
@@ -51,7 +71,10 @@ def register_error_handlers(app: FastAPI) -> None:
         )
 
     @app.exception_handler(RequestValidationError)
-    async def validation_error_handler(request: Request, exc: RequestValidationError):
+    async def validation_error_handler(
+        request: Request,
+        exc: RequestValidationError,
+    ):
         return JSONResponse(
             status_code=422,
             content={
@@ -68,7 +91,10 @@ def register_error_handlers(app: FastAPI) -> None:
         )
 
     @app.exception_handler(IntegrityError)
-    async def integrity_error_handler(request: Request, exc: IntegrityError):
+    async def integrity_error_handler(
+        request: Request,
+        exc: IntegrityError,
+    ):
         known = _lookup_constraint(exc)
 
         if known is None:
@@ -94,6 +120,24 @@ def register_error_handlers(app: FastAPI) -> None:
                 "error": {
                     "code": "constraint_violation",
                     "message": message,
+                    "details": {},
+                }
+            },
+        )
+
+    # Starlette は exception_handlers の中で Exception と 500 だけを特別扱いし、他のハンドラとは別の場所（最外層のミドルウェア）に据えます
+    @app.exception_handler(Exception)
+    def exception_handler(
+        request: Request,
+        exc: Exception,
+    ):
+        logger.error("...", exc_info=exc)
+        return JSONResponse(
+            status_code=500,
+            content={
+                "error": {
+                    "code": "internal_error",
+                    "message": "サーバー側で問題が発生しました",
                     "details": {},
                 }
             },
