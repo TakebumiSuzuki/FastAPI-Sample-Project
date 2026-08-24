@@ -13,6 +13,11 @@ from app.schemas import ItemCreate, ItemPublic, ItemUpdate
 router = APIRouter(prefix="/items", tags=["items"])
 
 
+# Annotatedの2番目以降は仕様上何を入れてもよく、標準の型チェッカーは
+# 第1引数（int）だけを見て2番目以降を無視
+# FastAPIの起動時処理は、「型注釈とメタデータを解析し、URLパスの抽出ルールと
+# Pydanticのバリデーションルール（ge=1 など）をルーター内部に登録・コンパイル
+# しておく」という仕組み。これらの処理はデコレーターが全部行う。
 @router.get("/{item_id}", response_model=ItemPublic)
 def get_item(
     item_id: Annotated[int, Path(ge=1)],

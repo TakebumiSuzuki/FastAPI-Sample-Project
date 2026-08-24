@@ -7,5 +7,6 @@ from app.models.category import Category
 
 
 def get_categories(db_session: Session) -> Sequence[Category]:
-    categories = db_session.execute(select(Category)).scalars().all()
+    stmt = select(Category).order_by(Category.id)
+    categories = db_session.execute(stmt).scalars().all()
     return categories
