@@ -46,7 +46,7 @@ JSONResponse(
 )
 - content は json.dumps にそのまま渡されるので、
 dict / list / str / int / bool / None など標準で JSON にできる値に限られる。
-(datetime や Pydantic モデルをそのまま入れるとエラー）
+(datetime型 や Pydantic モデルをそのまま入れるとエラー）
 """
 
 
