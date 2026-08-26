@@ -1,7 +1,7 @@
 from fastapi import HTTPException
 
 # Python の Exception が持つ属性（すべての例外が共通で持つ）
-# self.args           # raise 時に渡した引数のタプル。例: Exception("a", "b") → ("a", "b")
+# self.args           # インスタンス生成時に渡した引数のタプル。例: Exception("a", "b") → ("a", "b")
 # self.__traceback__  # traceback オブジェクト（どこで送出されたかの記録）。送出前は None
 # self.__cause__      # `raise B from A` の A。明示的に指定した原因。未指定なら None
 # self.__context__    # except 節の中で別の例外を送出したとき、元の例外が自動で入る

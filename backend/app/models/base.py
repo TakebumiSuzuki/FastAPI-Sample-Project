@@ -7,13 +7,12 @@ from sqlalchemy.orm import DeclarativeBase
 # これらは、mysql でも postgres でも、カラムオブジェクトとは別に、名前付きの
 # オブジェクトとして登録される。デフォルトではこれらの多くの名前はDB側で自動設定される。
 # ここでは、以下のように、アプリ側(sqlalchemy側)で名前規則を明示指定している。
-# ちなみに、これは、Alembic 公式ドキュメントに載っているものと同一の設定
-# 逆に、NOT NULL, VARCHAR(30), name, default などはカラム属性。
+# 一方、NOT NULL, VARCHAR(30), name, default などはカラム属性。
 naming_convention = {
-    "ix": "ix_%(column_0_label)s",
-    "uq": "uq_%(table_name)s_%(column_0_name)s",
+    "ix": "ix_%(table_name)s_%(column_0_N_name)s",
+    "uq": "uq_%(table_name)s_%(column_0_N_name)s",
     "ck": "ck_%(table_name)s_%(constraint_name)s",
-    "fk": "fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s",
+    "fk": "fk_%(table_name)s_%(column_0_N_name)s_%(referred_table_name)s",
     "pk": "pk_%(table_name)s",
 }
 

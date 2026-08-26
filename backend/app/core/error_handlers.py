@@ -80,6 +80,7 @@ def register_error_handlers(app: FastAPI) -> None:
                     "code": "validation_error",
                     "message": "入力内容を確認してください",
                     # loc の先頭は "body" / "query" などの出所なので落とし、残りをつないで項目名にする
+                    # または、出どころも入れるように、"details": exc.errors() のように書くのもOK
                     "details": {
                         ".".join(str(part) for part in error["loc"][1:]): error["msg"]
                         for error in exc.errors()
@@ -123,13 +124,14 @@ def register_error_handlers(app: FastAPI) -> None:
             },
         )
 
-    # Starlette は exception_handlers の中で Exception と 500 だけを特別扱いし、他のハンドラとは別の場所（最外層のミドルウェア）に据えます
+    # Starlette は exception_handlers の中で Exception と 500 だけを特別扱いし、
+    # 他のハンドラとは別の場所（最外層のミドルウェア）に据えます
     @app.exception_handler(Exception)
     def exception_handler(
         request: Request,
         exc: Exception,
     ):
-        logger.error("...", exc_info=exc)
+        logger.error("Unhandled exception occurred", exc_info=exc)
         return JSONResponse(
             status_code=500,
             content={
