@@ -8,6 +8,7 @@ from fastapi import HTTPException
 # self.__notes__      # add_note() で後から足したメモの list。add_note する前は属性自体が無い
 
 # FastAPI の HTTPExceptionが持つ属性は以下の３つ（上記に加えて）
+# しかし、Exceptionの中にある self.args は、HTTPExceptionでは活用していない。全て独自プロパティ。
 # self.status_code
 # self.detail # 型は Any
 # self.headers # 未指定なら None

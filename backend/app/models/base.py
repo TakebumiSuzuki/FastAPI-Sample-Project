@@ -6,8 +6,10 @@ from sqlalchemy.orm import DeclarativeBase
 # ForeignKeyConstraint, PrimaryKeyConstraint
 # これらは、mysql でも postgres でも、カラムオブジェクトとは別に、名前付きの
 # オブジェクトとして登録される。デフォルトではこれらの多くの名前はDB側で自動設定される。
-# ここでは、以下のように、アプリ側(sqlalchemy側)で名前規則を明示指定している。
-# 一方、NOT NULL, VARCHAR(30), name, default などはカラム属性。
+# ここでは、以下のように、アプリ側(sqlalchemy側)で命名規則を明示指定している。
+# 一方、NOT NULL, VARCHAR(30), name, DEFAULT などはカラム属性。
+# また、pkについては、複数のカラムを組み合わせることができるが、その組み合わせ一つが上限。
+# これらのルールで作られた名前が DDLの SQL の中で使われ、DBに送られることになる。
 naming_convention = {
     "ix": "ix_%(table_name)s_%(column_0_N_name)s",
     "uq": "uq_%(table_name)s_%(column_0_N_name)s",
@@ -17,10 +19,8 @@ naming_convention = {
 }
 
 
-# 通常は、Base クラスを読み込んだ時点で、クラス変数 metadata として、自動的に
-# MetaData インスタンスが生成される。
-# しかし、ここでは、naming_convention=naming_convention の引数を入れ、
-# デフォルトの MetaData ではなく、独自の命名規則を持った
-# MetaData インスタンスを作っている
+# DeclarativeBase にある、__init_subclass__ の働きで、直接のサブクラスの場合のみ、
+# クラス変数 metadata として、自動的に 空の MetaData インスタンスが生成される。または、
+# この例のようにすでに metadata がある場合にはそれをそのまま使うというという挙動をする。
 class Base(DeclarativeBase):
     metadata = MetaData(naming_convention=naming_convention)
