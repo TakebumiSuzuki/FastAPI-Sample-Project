@@ -20,12 +20,19 @@ def get_item_by_name(db_session: Session, item_name: str) -> Item | None:
 
 
 def get_items(db_session: Session, skip: int = 0, limit: int = 10) -> Sequence[Item]:
-    stmt = select(Item).offset(skip).limit(limit).options(joinedload(Item.category))
+    stmt = (
+        select(Item)
+        .order_by(Item.id)
+        .offset(skip)
+        .limit(limit)
+        .options(joinedload(Item.category))
+    )
     items = db_session.execute(stmt).scalars().all()
     return items
 
 
 def create_item(db_session: Session, item_in: ItemCreate) -> Item:
+    # model_dump()は Python 辞書に変換、model_dump_json() は JSON 文字列に変換
     new_item = Item(**item_in.model_dump())
     db_session.add(new_item)
     db_session.commit()

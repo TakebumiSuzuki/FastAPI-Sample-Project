@@ -55,6 +55,13 @@ SQLAlchemy 2.0 の `DeclarativeBase` では、**「`__init_subclass__`」** と 
 2. このグループ専用の **新しい `registry`** と **`metadata`（`registry.metadata`）** が生成される。
 3. `Base.registry` および `Base.metadata` としてクラス変数にセットされる。
 
+#### 補足：Step 1 と Step 2 はどう振り分けられているか
+SQLAlchemyは、定義しているクラスの「すぐ真上の親」が何かを見て処理を分けています。
+* すぐ真上の親が `DeclarativeBase` そのもの（＝`Base` を作った直後）→ **Step 1**（新しく作る）
+* すぐ真上の親が `DeclarativeBase` ではなく `Base`（＝`Base` の子である `User` を作った時）→ **Step 2**（スキャンして登録する）
+
+「すぐ真上の親」だけを見ているので、`User` の子の子…と孫・ひ孫のクラスを作っても、判定結果は変わらず常に Step 2 になります。
+
 ### Step 2: `class User(Base):` の定義時
 1. `Base.__init_subclass__` が作動（内部関数 `_as_declarative` が実行される）。
 2. クラス内の属性をスキャン：
