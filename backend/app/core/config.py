@@ -11,6 +11,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # ② OSの環境変数（os.environ）
 # ③ .env ファイルの値
 # ④ クラス定義のデフォルト値（app_name = "FastAPI App" など）
+# ちなみに pydantci_settings は変数名の大文字小文字を区別しない。
 class Settings(BaseSettings):
     app_name: str = "FastAPI App"
     admin_email: EmailStr
