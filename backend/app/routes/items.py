@@ -17,7 +17,7 @@ router = APIRouter(prefix="/items", tags=["items"])
 # 第1引数（int）だけを見て2番目以降を無視
 # FastAPIの起動時処理は、「型注釈とメタデータを解析し、URLパスの抽出ルールと
 # Pydanticのバリデーションルール（ge=1 など）をルーター内部に登録・コンパイル
-# しておく」という仕組み。これらの処理はデコレーターが全部行う。
+# しておく」という仕組み。これらの処理はデコレーターが起点となり裏で実行される。
 @router.get("/{item_id}", response_model=ItemPublic)
 def get_item(
     item_id: Annotated[int, Path(ge=1)],

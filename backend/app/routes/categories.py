@@ -25,6 +25,7 @@ def create_category(
     new_category: Annotated[CategoryCreate, Body()],
     db_session: Annotated[Session, Depends(get_db_session)],
 ) -> Category:
+    # 以下を、category = Category(**new_category.model_dump()) と書いても良い
     category = Category(name=new_category.name)
     db_session.add(category)
     db_session.commit()

@@ -17,4 +17,9 @@ class Category(Base):
 
     items: Mapped[list["Item"]] = relationship("Item", back_populates="category")
 
-    __table_args__ = (CheckConstraint("length(name) >= 3", name="name_min_length_3"),)
+    __table_args__ = (
+        CheckConstraint(
+            "length(name) >= 3",
+            name="name_min_length_3",
+        ),
+    )

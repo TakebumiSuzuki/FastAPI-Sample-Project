@@ -20,7 +20,8 @@ naming_convention = {
 
 
 # DeclarativeBase にある、__init_subclass__ の働きで、直接のサブクラスの場合のみ、
+# (つまり、DeclarativeBase を直接継承した Base にだけ、)、デフォルトで
 # クラス変数 metadata として、自動的に 空の MetaData インスタンスが生成される。または、
-# この例のようにすでに metadata がある場合にはそれをそのまま使うというという挙動をする。
+# この例の様に、すでに metadata がある場合にはそれをそのまま使うというという挙動をする。
 class Base(DeclarativeBase):
     metadata = MetaData(naming_convention=naming_convention)

@@ -24,5 +24,8 @@ class Item(Base):
     category: Mapped["Category"] = relationship("Category", back_populates="items")
 
     __table_args__ = (
-        CheckConstraint("price > sale_price", name="price_gt_sale_price"),
+        CheckConstraint(
+            "price > sale_price",
+            name="price_gt_sale_price",
+        ),
     )

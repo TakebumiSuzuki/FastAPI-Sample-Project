@@ -2,7 +2,7 @@
 # 1. アプリケーションファクトリーパターン（create_app関数内でappを生成して返す設計）は
 # Flask等でテスト容易性の向上目的によく使われるが、FastAPIでは、 Depends や
 # dependency_overrides があるため、本ファイルのように直接 app = FastAPI() と定義するのが一般的
-# 2. 実務やFastAPI公式推奨では、main.py を app/main.py に配置し、
+# 2. 実務やFastAPI公式推奨では、この main.py を app/main.py に配置し、
 # アプリケーションコード全体を app/ ディレクトリ内に集約させる構成が多く用いられる。
 
 from fastapi import FastAPI
