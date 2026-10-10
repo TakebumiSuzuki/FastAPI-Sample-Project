@@ -18,7 +18,6 @@ extend-select= ["UP","I","B"]
 
 ### Pylance の `typeCheckingMode` は4段階
 - `off` → `basic` → `standard` → `strict` の順に厳しくなる
-- 「medium」という値は存在しない（最初勘違いしていた）。中間の強さは `standard`
 
 ### ruff：`select` と `extend-select` の違い
 - 何も設定しなくても `E4`/`E7`/`E9`/`F`（構文エラー・未定義変数など）はデフォルトで有効

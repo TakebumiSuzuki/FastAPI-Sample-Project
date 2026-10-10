@@ -27,7 +27,7 @@ VS Code の自動ポート転送経由で `http://localhost:8000/docs` を開き
 
 ## 学んだこと
 
-### extras（`fastapi[standard]` の `[...]`）
+### extras（`fastapi[standard]` の `[]`）
 - Python パッケージングの正式な仕組み。PyPA の Packaging User Guide に規定されている
 - パッケージ作者が `[project.optional-dependencies]` で「`standard` という名前で
   これらも一緒に入れられる」と定義しており、利用側は `パッケージ名[extra名]` と書くだけで済む
@@ -77,14 +77,10 @@ VS Code の自動ポート転送経由で `http://localhost:8000/docs` を開き
 
 ## 追記：Q&A で深掘りしたこと
 
-（検証は `backend/.venv` 内の実物のソースを読み、TestClient で実際に叩いて確認。
-fastapi 0.141.1 / starlette 1.3.1 / uvicorn 0.52.0）
-
 ### 末尾スラッシュ：`/items` と `/items/` は別のパス
 - Starlette は書いた形のパスだけを登録する。どのルートにも当たらなかったとき、
   末尾スラッシュを足した／剥がした形で再照合し、当たれば **307 リダイレクト**を返す。
   この補正は**双方向**（`/items` → `/items/` も、`/items/` → `/items` も効く）
-  （`Router.app()` / `starlette/routing.py:695`）
 - 307 なのはメソッドとボディを保持するため（301/302 だと POST が GET に化ける）
 - Flask とは向きが違う。**Flask はルール定義が正で片方向**：
   `@app.route('/projects/')` に `/projects` で来たらリダイレクト、
@@ -95,8 +91,7 @@ fastapi 0.141.1 / starlette 1.3.1 / uvicorn 0.52.0）
 - `""` と書くと「パスが空文字のときだけ呼ばれるルート」が登録される。エラーは出ない
 - ところがブラウザは `http://localhost:8000` と打っても `/` を付けて送る。
   サーバに空文字のパスが届くことはないので、このルートは一生呼ばれず 404
-- 末尾スラッシュのリダイレクト救済（`/` を足す／剥がす）も、695行の条件
-  `route_path != "/"` で `/` 宛てを除外しているため、ここでは働かない
+- 末尾スラッシュのリダイレクト救済（`/` を足す／剥がす）は、FastAPI の仕様で禁止されているので、ここでは働かない
 - `app` 直下は必ず `@app.get("/")`
 - 例外：`APIRouter(prefix="/api")` と組み合わせた `@r.get("")` は `/api` になる正しい書き方
   （`prefix` は末尾スラッシュ禁止なので、こう書くしかない）
@@ -142,7 +137,6 @@ fastapi 0.141.1 / starlette 1.3.1 / uvicorn 0.52.0）
   その役目だけ gunicorn に任せて uvicorn をワーカーとして動かしていた
 - 今はその機能が uvicorn 本体に入った（`uvicorn/supervisors/multiprocess.py`）ので
   `uvicorn --workers 4` で足りる。FastAPI 公式のデプロイページからも gunicorn の記述は消えた
-- uvicorn 側の連携モジュールも `"The uvicorn.workers module is deprecated"` と警告を出す
 - なお Docker / K8s では `--workers` を使わず「1コンテナ1プロセス、レプリカ数で増やす」が公式推奨
 
 ## 詰まった点・気づき

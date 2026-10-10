@@ -9,7 +9,7 @@ FastAPI における **Pydantic スキーマ（入力検証・出力制御・ス
 ```mermaid
 flowchart TD
     ClientReq["💻 クライアント<br/>（リクエスト送信）"]
-    
+
     subgraph RequestStage["1. HTTP リクエスト（POST / PUT 等）"]
         Req["リクエスト受信<br/>・JSON 本文（ボディ）<br/>・パス / クエリパラメータ"]
     end
@@ -19,7 +19,7 @@ flowchart TD
         Step1["【1段目】引数の割り当て<br/>（BaseModel 型から生成）"]
         Step2["【2・3段目】型変換 ＆ Field 制約<br/>（型不一致・制約違反時は 422）"]
         Step3["【4段目】model_validator (after)<br/>（複数項目の相関チェック）"]
-        
+
         Step0 --> Step1 --> Step2 --> Step3
     end
 
@@ -94,10 +94,10 @@ flowchart TD
    - **内容**: `Field(...)`, `Path(...)`, `Query(...)` に設定した `gt`（より大きい）や `min_length` を満たすか。
    - **エラー**: `type: "greater_than"`, `type: "string_too_short"` など。
 
-> **`loc` の共通ルール**:  
+> **`loc` の共通ルール**:
 > エラー発生場所を示す `loc` の先頭には `["body", ...]` / `["query", ...]` / `["path", ...]` が入り、どこから来た値のエラーかが一目で分かります。
 
-> **ポイント：エラーは1件目で打ち切られず、リストにまとめて返される**  
+> **ポイント：エラーは1件目で打ち切られず、リストにまとめて返される**
 > `routing.py` の内部で検証エラーを配列に蓄積してから `RequestValidationError` (422) を投げるため、フォーム送信時などに複数エラーを一度にフロントへ通知できます。
 
 ---
@@ -115,7 +115,7 @@ class ItemCreate(BaseModel):
     price: float = Field(default=10.0, gt=0)  # default はキーワード引数で書く（型推論のため）
 ```
 
-> **内部構造のメモ**:  
+> **内部構造のメモ**:
 > `Path` や `Query` は `fastapi.params.Param` を経由して Pydantic の `FieldInfo` を継承しています。そのため、`gt` や `min_length` などの引数名や内部メタデータは `Field` と全く同じです。
 
 ### ② 複数フィールドにまたがる相関チェック：`@model_validator(mode="after")`
@@ -207,7 +207,7 @@ def get_item(item_id: int):
 | **⭐ ベストプラクティス**<br>`response_model=ItemPublic` ＋ `-> Item` (ORM型) | **FastAPI** と **型チェッカー** の両方に正確な役割分担 | **型チェッカーは ORM の返却として完全検証**され、**FastAPI は `ItemPublic` で安全に出力変換・OpenAPI 生成**を行う。実務で最も安全かつ快適な書き方。 | デコレータ引数と型注釈の両方を書く必要がある。 |
 
 #### どう使い分けるべきか？
-- **DB (ORM) を使ってオブジェクトをそのまま返す場合（実務の王道）**:  
+- **DB (ORM) を使ってオブジェクトをそのまま返す場合（実務の王道）**:
   ```python
   @app.get("/items/{item_id}", response_model=ItemPublic)
   def get_item(item_id: int) -> Item:  # Item は SQLAlchemy などの ORM クラス
@@ -215,9 +215,9 @@ def get_item(item_id: int):
       return db_item  # 型チェッカーも FastAPI も完璧に動作する！
   ```
   ※ `ItemPublic` には `model_config = ConfigDict(from_attributes=True)` が必要です。
-- **Pydantic モデルに手動変換して返す場合**:  
+- **Pydantic モデルに手動変換して返す場合**:
   `return ItemPublic.model_validate(db_item)` と書くなら、`def get_item(...) -> ItemPublic:` で OK。
-- **辞書（`dict`）を手動で組み立てて返す場合**:  
+- **辞書（`dict`）を手動で組み立てて返す場合**:
   `@app.get(..., response_model=ItemPublic)` で `def get_item(...) -> dict:` または型注釈省略。
 
 ※ 両方同時に書いた場合は、FastAPI のスキーマ・シリアライズには `response_model=` の指定が優先されます。
@@ -237,7 +237,7 @@ Public（出力）    ○       ○         ○ (必須)     × (漏洩防止で
 DB テーブル       ○       ○         ○ (主キー)   ○ (保存)
 ```
 - **新規登録（Create）**: `id` は DB が自動採番するため入力には含めない。
-- **一部更新（Update）**: 変更したい項目だけ送るため、全フィールドを `None` 許容（任意）にする。
+- **一部更新（Update）**: 変更したい項目だけ送るため、全フィールドを `None` 許容（任意）にする。REST API では、更新時に PATCH /items/{item_id} のように URL 側で対象の idを指定します。そのため、ボディ用のスキーマ（ItemUpdate）には id は含めない設計にする。
 - **出力（Public）**: 採番された `id` を含め、社内用の `secret_memo` を除外する。
 
 ### ② 継承を使った設計パターン
@@ -271,7 +271,7 @@ class ItemUpdate(BaseModel):
         # 何も更新対象が送られてこなかったら弾く
         if not self.model_fields_set:
             raise ValueError("At least one field must be provided for update")
-        
+
         # 値が存在する場合のみ相関チェック（None >= 数値 の TypeError を防ぐ）
         if self.price is not None and self.sale_price is not None:
             if self.sale_price >= self.price:

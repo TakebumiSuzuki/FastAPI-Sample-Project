@@ -8,11 +8,18 @@ SQLAlchemy 2.0 におけるカラム定義の型情報の役割、型推論の�
 
 SQLAlchemy 2.0 では、左辺の Python 型注釈を **SSOT（信頼できる唯一の情報源）** として扱い、右辺には Python 型だけでは表現できない DB の物理制約のみを記述する。
 
-```text
-[左辺: Python型 (Mapped[T])] ──(自動推論)──> [右辺: DB側のカラム設定 (mapped_column)]
-  ・エディタ補完・静的型検査                    ・主キー (primary_key=True)
-  ・型推論の基準 (SSOT)                         ・NULL許容 / 既定値 (server_default)
-                                               ・物理的な長さ・精度 (String(50), Numeric(10, 2))
+```mermaid
+flowchart LR
+    subgraph L["左辺: Python型 (Mapped[T])"]
+        L1["エディタ補完・静的型検査"]
+        L2["型推論の基準 (SSOT)"]
+    end
+    subgraph R["右辺: DB側のカラム設定 (mapped_column)"]
+        R1["主キー (primary_key=True)"]
+        R2["NULL許容 / 既定値 (server_default)"]
+        R3["物理的な長さ・精度 (String(50), Numeric(10, 2))"]
+    end
+    L -->|自動推論| R
 ```
 
 ### 役割分担
@@ -69,30 +76,104 @@ class User(Base):
 
 ### 代入時は検証されない
 
-Python の型注釈は実行時には強制力を持たず、モデル属性への代入（例: `user.flag = "invalid"`）時点ではエラーにならない。
-検証や型変換が実行されるのは、**`flush()`（`commit()` を含む SQL 発行時）** のタイミングとなる。
+Python の型注釈は実行時には強制力を持たず、モデル属性への代入時点ではエラーにならない。
+上の `User` で言えば、`created_at` は `Mapped[datetime]` と宣言されているが、
+
+```python
+user.created_at = "2020-01-01"   # 文字列。ここでは何も起きない
+```
+
+と代入しても、この行は素通りする。型変換が実行されるのは、**`flush()`（`commit()` を含む SQL 発行時）** のタイミングとなる。
 
 ### エラーの種類と発生場所
 
+`commit()` を呼んでから DB に行が書き込まれるまでには、3人の登場人物が順に仕事をする。
+エラーはそれぞれの段階で別の名前で出るため、例外名を見ればどこで失敗したかが分かる。
+以下は Postgres（ドライバは psycopg）を使った場合の流れ。
+
 ```text
-[属性代入: user.val = x]
-      │ (代入時は素通り)
+[属性代入: user.created_at = "2020-01-01"]
+      │ (代入時は素通り。Python は注釈をチェックしない)
       ▼
-[flush() / commit() 呼び出し]
+session.commit()
       │
-      ├─① bind_processor による変換処理 (SQLAlchemy 側)
-      │     └─ 変換失敗 ──> StatementError (ValueError / TypeError をラップ)
-      │
-      ▼ (DB へ SQL 送信)
-[DB エンジンでの実行]
-      ├─② DB 側の型不整合 ──> DataError / ProgrammingError
-      └─③ 制約違反 (NOT NULL / UNIQUE / FK / CHECK) ──> IntegrityError
+┌─────┴───────────────────────────────────────────────────┐
+│ ① SQLAlchemy（まだ Python の中。通信していない）          │
+│                                                          │
+│  1. 変更されたオブジェクトを調べる                        │
+│     セッションが預かっているオブジェクトを全部見て、       │
+│     新しく作られた／書き換えられた／消されたものを拾い、   │
+│     どの行を INSERT / UPDATE / DELETE するか決める        │
+│                                                          │
+│  2. SQL 文を組み立てる                                    │
+│     "INSERT INTO users (created_at) VALUES (%(created_at)s)"
+│     値が入る位置には %(created_at)s という目印を書く。     │
+│     実際の値は SQL 文の中に現れず、別の入れ物に取っておく  │
+│                                                          │
+│  3. bind_processor                                       │
+│     取っておいた値を、psycopg が受け取れる形に直す        │
+│     直せなかった場合 ──> StatementError                   │
+│                                                          │
+│  4. SQL 文と値を psycopg に渡す                           │
+└─────┬───────────────────────────────────────────────────┘
+┌─────┴───────────────────────────────────────────────────┐
+│ ② psycopg（Postgres と通信する部品）                     │
+│                                                          │
+│  5. 目印の書き方を Postgres の書き方に直す                │
+│     %(created_at)s ──> $1                                │
+│                                                          │
+│  6. 値を Postgres が読める形に変換する                    │
+│     Postgres は Python のオブジェクトを知らないので、     │
+│     ネットワークで送れるデータの並びに直す                │
+│     変換方法が用意されていない型 ──> ProgrammingError     │
+│                                                          │
+│  7. SQL 文と値を、別々に送信する                          │
+└─────┬───────────────────────────────────────────────────┘
+┌─────┴───────────────────────────────────────────────────┐
+│ ③ PostgreSQL サーバ                                      │
+│                                                          │
+│  8. SQL 文だけを先に受け取り、解析する                    │
+│  9. 次に値を受け取り、$1 の位置に入れる                   │
+│     入れた値が列の型に合わない ──> DataError              │
+│ 10. 実行する。NOT NULL / UNIQUE / FK / CHECK 違反         │
+│                                 ──> IntegrityError       │
+│ 11. COMMIT                                               │
+└──────────────────────────────────────────────────────────┘
 ```
 
-| 例外の種類 | 発生フェーズ | 主な原因 |
+| 例外の種類 | 出る場所 | 主な原因 |
 |---|---|---|
-| `StatementError` | SQLAlchemy（Python 側） | `bind_processor` での型変換失敗（例: `Float` に `"abc"` を代入） |
-| `DataError` / `ProgrammingError` | データベース側 | DB が受け付けない値・型（例: `Integer` に変換不能な文字列が到達） |
-| `IntegrityError` | データベース側 | 制約違反（NOT NULL 違反、主キー/ユニーク重複、外部キー違反） |
+| `StatementError` | ① SQLAlchemy（Python 側） | `bind_processor` での変換失敗（`ValueError` / `TypeError` をラップする） |
+| `ProgrammingError` | ② psycopg（Python 側） | その Python 型を Postgres 用に変換する方法が用意されていない |
+| `DataError` | ③ DB サーバ | 届いた値が列の型に合わない |
+| `IntegrityError` | ③ DB サーバ | 制約違反（NOT NULL、主キー/ユニーク重複、外部キー、CHECK） |
 
-※ 型の取り違え自体は `IntegrityError` ではなく、`StatementError` または `DataError` になる点に注意する。
+※ 型の取り違え自体は `IntegrityError` ではなく、`StatementError` / `ProgrammingError` / `DataError` のいずれかになる。
+
+### `bind_processor` が何をするか（DB によって違う）
+
+3番の `bind_processor` は「Python の値を、ドライバが受け取れる形に直す」担当だが、
+**何をするかは DB ごとに違う。**
+
+- **SQLite**: `datetime(2020, 1, 1)` はそのままでは保存できないので、
+  ここで `"2020-01-01 00:00:00"` という文字列に直す。
+- **Postgres**: psycopg が `datetime` をそのまま扱えるので、SQLAlchemy 側で直す必要がない。
+  そのため `datetime` 用の変換処理が**登録されておらず**、この段階は素通りする。
+
+実際に確認したところ（`backend/` で `uv run python` を実行）、Postgres では
+`Integer` / `String` / `DateTime` はいずれも変換処理を持たず（`bind_processor` が `None`）、
+`Numeric` と `Boolean` だけが処理を持っていた。SQLite ではこれに `DateTime` が加わる。
+
+**同じコードでも、変換が起きる場所とエラーの出る場所が DB によって変わる**、ということになる。
+
+### 型の不一致が最後まで素通りする場合もある
+
+上記とは別に、**そもそもどこでもエラーにならない**ケースがある。
+`Mapped[int]` の列に `"abc"` を代入して SQLite に `commit()` すると、
+例外は出ず、`"abc"` がそのまま保存される（同じく `uv run python` で確認）。
+
+理由は2つ。`Integer` は SQLite でも Postgres でも `bind_processor` を持たない（①で素通りする）。
+そして SQLite は列の型と違う値を受け入れる作りになっている（③でも弾かれない）。
+
+つまり「`flush()` で型が検証される」は全ての型に当てはまるわけではない。
+確実に弾きたい値は、`@validates` か DB の CHECK 制約で明示的に止める必要がある。
