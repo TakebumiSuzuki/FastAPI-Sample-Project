@@ -1,0 +1,12 @@
+from pwdlib import PasswordHash
+
+# 最新の推奨設定（Argon2id）を適用した pwdlib インスタンスを作っている
+password_hash = PasswordHash.recommended()
+
+
+def hash_password(password: str) -> str:
+    return password_hash.hash(password)
+
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    return password_hash.verify(plain_password, hashed_password)

@@ -7,6 +7,7 @@ requires-python = ">=3.13"
 dependencies = [
     "alembic>=1.19.1",
     "fastapi[standard]>=0.141.1",
+    "pwdlib[argon2]>=0.3.1",
     "sqlalchemy>=2.0.51",
 ]
 
@@ -15,6 +16,7 @@ extend-select= ["UP","I","B"]
 
 [dependency-groups]
 dev = [
+    "httpx2>=2.15.1",
     "pytest>=9.1.1",
 ]
 

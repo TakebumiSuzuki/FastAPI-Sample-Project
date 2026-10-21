@@ -38,3 +38,13 @@ class ItemOutOfStock(HTTPException):
     def __init__(self, item_id: int):
         super().__init__(status_code=400, detail=f"Item {item_id} is out of stock")
         self.details = {"item_id": item_id}
+
+
+class UserAlreadyExists(HTTPException):
+    code = "user_already_exists"
+
+    def __init__(self, user_email: str):
+        super().__init__(
+            status_code=409, detail=f"User email: {user_email} already exists"
+        )
+        self.details = {"user_email": user_email}

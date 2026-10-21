@@ -1,7 +1,7 @@
 # SQLAlchemy のセッションとトランザクション管理のノート
 
 ## 1. Session の設定
-- **`autocommit=False`（推奨）**：トランザクションを確定させるには明示的に `db_session.commit()` を呼ぶ必要がある。意図せず未コミットの変更が残ることを防ぎ、データの整合性を保つ。
+- **`autocommit=False`（SQLAlchemy 2.0 では `False` 固定で変更不可）**：トランザクションを確定させるには明示的に `db_session.commit()` を呼ぶ必要がある。意図せず未コミットの変更が残ることを防ぎ、データの整合性を保つ。
 - **`autoflush=False`（推奨）**：クエリの前に、メモリ上の変更が自動で DB へ送られる（フラッシュされる）のを止める。いつ DB へ変更を押し出すかを自分で明示的に制御できる。
 
 ---
@@ -20,7 +20,8 @@
 
 ### トランザクションのライフサイクル（遅延 BEGIN）
 - **Session の生成時**：DB のトランザクションは開始**されない**。
-- **最初の DB 操作時**（`SELECT`、`flush()` など）：内部で自動的に `BEGIN` が発行される。
+- **SQLAlchemy 側のトランザクション（`SessionTransaction`）**：`execute()` / `add()` / `delete()` などを呼んだ時に、Session が内部で自動的に作る（autobegin）。これは Python 側の状態管理で、DB には何も送らない。DB の種類（PostgreSQL / SQLite など）に関係なく、SQLAlchemy 側の動きは同じ。
+- **最初の DB 操作時**（`SELECT`、`flush()` など）：DBAPI ドライバ（psycopg）が最初の SQL 実行の直前に `BEGIN` を DB へ送る。SQLAlchemy 側の「autobegin」は Python 内部の状態管理で、SQL は送らない。
 - **`db_session.commit()` / `db_session.rollback()`**：トランザクションを確定させ、終了する。
 
 ### ロックと MVCC
@@ -45,7 +46,7 @@ SQLAlchemy の `Session` は **Unit of Work（作業単位）パターン** を�
 * *(※補足)* `autoflush=True` の場合、`commit()` 前であっても途中で `SELECT` が実行されると、データの整合性を保つために未送信の変更 SQL が自動で先行フラッシュ（送信）されますが、`COMMIT` はされずトランザクションは継続します。
 
 ### ② 読み取り系操作（`SELECT`）
-* **メソッド実行時（`session.execute(select(...))` 等）:** 今すぐデータを取得して Python オブジェクトを構築する必要があるため、**即座に `SELECT` クエリが DB へ送信** されます（初回であれば裏で自動的に `BEGIN` が発行されます）。
+* **メソッド実行時（`session.execute(select(...))` 等）:** 今すぐデータを取得して Python オブジェクトを構築する必要があるため、**即座に `SELECT` クエリが DB へ送信** されます（初回であれば、その直前に psycopg が `BEGIN` を DB へ送ります）。
 * **クエリ実行後:** データの取得が終わっても、SQLAlchemy は**トランザクションを自動で閉じません（終了 SQL は送りません）**。後続のクエリや更新処理に備えて、DB 側は **`idle in transaction`（トランザクション継続待機中）** の状態のまま維持されます。
 * **トランザクションが閉じるタイミング:**
   * 明示的に `db_session.commit()` または `db_session.rollback()` を呼んだ時。

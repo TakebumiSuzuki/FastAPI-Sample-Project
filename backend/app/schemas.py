@@ -1,4 +1,4 @@
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
 
 
 class ItemBase(BaseModel):
@@ -65,3 +65,15 @@ class CategoryPublic(CategoryBase):
 
 class CategoryCreate(CategoryBase):
     pass
+
+
+class UserCreate(BaseModel):
+    email: EmailStr
+    password: str = Field(max_length=255, min_length=8)
+    model_config = ConfigDict(extra="forbid")
+
+
+class UserPublic(BaseModel):
+    id: int
+    email: EmailStr
+    model_config = ConfigDict(from_attributes=True)

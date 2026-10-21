@@ -25,7 +25,9 @@ user_id: Annotated[int, "ユーザーID", {"example": 42}, Path(gt=0)]
 
 ### ② 静的型チェッカー（mypy, pyright等）の扱い
 **型チェッカーは第2引数以降のメタデータを無視（透過）します。**
-型チェッカーにとって、`Annotated[int, Path(ge=1)]` は単なる `int` として認識されます。そのため、静的型チェックの厳密性を保ちながら、フレームワーク（FastAPIなど）に対して任意の実行時メタデータを付与できます。(ただし、pythonのインタープリタは 3.13以下のバージョンでは、ランタイムの読み取り時に評価してエラーなども出しうることに注意。3.14以降はlazyに、実際に必要とされときに初めて評価する)
+型チェッカーにとって、`Annotated[int, Path(ge=1)]` は単なる `int` として認識されます。そのため、静的型チェックの厳密性を保ちながら、フレームワーク（FastAPIなど）に対して任意の実行時メタデータを付与できます。
+
+ただし、pythonのインタープリタは 3.13以下のバージョンでは、ランタイムの読み取り時に評価してエラーなども出しうることに注意。（3.14以降はlazyに、実際に必要とされときに初めて評価する。）Python 3.13以下では 関数 が定義（読み込み）されたタイミングで、Annotated[...] 内の Path(gt=0)も即座に評価（※式が実行されてオブジェクトが生成されること）され、引数の間違いなどでエラーが起きる場合は、APIリクエスト時ではなくサーバー起動（モジュール読み込み）時の段階でエラーが発生する
 
 ---
 
@@ -141,7 +143,7 @@ FastAPIは関数の引数が **「どこから取得されるべき値か」** �
 | `header_params` | HTTPリクエストヘッダーから抽出する引数 | `user_agent: Annotated[str, Header()]` |
 | `cookie_params` | Cookieから抽出する引数 | `session_id: Annotated[str, Cookie()]` |
 | `body_params` | リクエストボディ（JSON, Form, File） | `item: ItemCreate`, `file: UploadFile` |
-| `dependencies` | `Depends(...)` で指定された依存関係 | `db: Annotated[Session, Depends(get_db)]` |
+| `dependencies` | `Depends(...)` で指定された依存関係（依存関数がさらに別の依存関係を持つ入れ子構造も含む） | `db: Annotated[Session, Depends(get_db)]` |
 | `security_requirements` | 認証・認可に関するセキュリティ定義 | `OAuth2PasswordBearer` 等のスキーム |
 
 > **ポイント**:

@@ -11,6 +11,7 @@ from app.core.config import get_settings
 from app.core.error_handlers import register_error_handlers
 from app.routes.categories import router as categories_router
 from app.routes.items import router as items_router
+from app.routes.users import router as users_router
 
 app = FastAPI()
 
@@ -25,3 +26,4 @@ def read_root():
 
 app.include_router(items_router)
 app.include_router(categories_router)
+app.include_router(users_router)
