@@ -99,3 +99,15 @@ class UserPublic(BaseModel):
     id: int
     email: EmailStr
     model_config = ConfigDict(from_attributes=True)
+
+
+# 送る直前（サーバーからクライアントへレスポンスを返す時）に使う
+class Token(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+
+
+class UserLogin(BaseModel):
+    email: EmailStr
+    password: str
+    model_config = ConfigDict(extra="forbid")
