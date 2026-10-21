@@ -1,4 +1,13 @@
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    EmailStr,
+    Field,
+    field_validator,
+    model_validator,
+)
+
+# EmailStr は、デフォルトで前後の半角スペースおよび全角スペースを自動的に除去（トリム）します。
 
 
 class ItemBase(BaseModel):
@@ -71,6 +80,19 @@ class UserCreate(BaseModel):
     email: EmailStr
     password: str = Field(max_length=255, min_length=8)
     model_config = ConfigDict(extra="forbid")
+
+    @field_validator("password", mode="after")
+    @classmethod
+    def check_password(cls, v: str) -> str:
+        if not any(char.isdigit() for char in v):
+            raise ValueError("Password must contain at least one digit")
+        if not any(char.isupper() for char in v):
+            raise ValueError("Password must contain at least one uppercase letter")
+        if not any(char.islower() for char in v):
+            raise ValueError("Password must contain at least one lowercase letter")
+        if not any(char in "!@#$%^&*()_+-=[]{}|;:,.<>?" for char in v):
+            raise ValueError("Password must contain at least one special character")
+        return v
 
 
 class UserPublic(BaseModel):
