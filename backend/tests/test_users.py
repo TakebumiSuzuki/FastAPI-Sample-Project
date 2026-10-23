@@ -1,8 +1,10 @@
+import jwt
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.core.security import verify_password
 from app.models import User
 
@@ -73,5 +75,85 @@ def test_register_invalid_password(client: TestClient, password: str):
     assert "password" in data["error"]["details"]
 
 
-def test_login_user():
-    pass
+def test_login_user(client: TestClient, seed_users):
+    response = client.post(
+        "/users/login",
+        json={
+            "email": "test_user_1@gmail.com",
+            "password": "Test_password_1!",
+        },
+    )
+    assert response.status_code == 200
+    assert "access_token" in response.json()
+    assert "refresh_token" in response.cookies
+    assert "HttpOnly" in response.headers["set-cookie"]
+
+    access_token = response.json()["access_token"]
+
+    settings = get_settings()
+    access_payload = jwt.decode(
+        access_token,
+        settings.secret_key,
+        algorithms=[settings.algorithm],  # リストで渡す必要があります
+    )
+    assert access_payload["email"] == "test_user_1@gmail.com"
+    assert access_payload["type"] == "access"
+
+    refresh_token = response.cookies["refresh_token"]
+    refresh_payload = jwt.decode(
+        refresh_token,
+        settings.secret_key,
+        algorithms=[settings.algorithm],  # リストで渡す必要があります
+    )
+    assert refresh_payload["email"] == "test_user_1@gmail.com"
+    assert refresh_payload["type"] == "refresh"
+
+
+@pytest.mark.parametrize(
+    "email, password",
+    [
+        ("test_user_1@gmail.com", "Test_password_2!"),
+        ("test_user_3@gmail.com", "Test_password_2!"),
+    ],
+)
+def test_user_login_invalid_email_or_password(
+    client: TestClient,
+    seed_users,
+    email: str,
+    password: str,
+):
+    response = client.post("/users/login", json={"email": email, "password": password})
+    assert response.status_code == 401
+    assert response.json()["error"]["message"] == "Incorrect email or password"
+
+
+def test_user_login_invalid_email(
+    client: TestClient,
+    seed_users,
+):
+    response = client.post(
+        "/users/login",
+        json={
+            "email": "test_email",
+            "password": "Test_password_2!",
+        },
+    )
+    assert response.status_code == 422
+    data = response.json()
+    assert data["error"]["code"] == "validation_error"
+
+
+def test_user_login_invalid_payload(
+    client: TestClient,
+    # seed_users, これは必要ない。なぜならDB照合前に弾かれるから。
+):
+    response = client.post(
+        "/users/login",
+        json={
+            "email": "test_user_1@gmail.com",
+            "password": "Test_password_1!",
+            "another_key": "test_data",
+        },
+    )
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "validation_error"

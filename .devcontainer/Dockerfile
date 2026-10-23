@@ -2,12 +2,12 @@
 # ファイルは /usr/local/ 以下に散在(/bin, /lib, /share など)している。ちなみに、
 # 専属パッケージ管理ツールの apt-get を使うと /usr/ 内にインストールされる。
 # また、/usr は "Unix System Resources" の略で、プログラム・ライブラリ・ドキュメント類を置くディレクトリ。
-FROM node:22-trixie
+FROM node:24-trixie
 
 # uv のバイナリを Astral 公式 distroless イメージからコピー。
 # /uv と /uvx は フォルダではなく単一の実行バイナリファイル。(libなどに分散していない)
 # イメージ全体を pull してから必要なファイルだけコピーしている。マルチステージビルドの仕組み。
-COPY --from=ghcr.io/astral-sh/uv:0.11.8 /uv /uvx /usr/local/bin/
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
 
 # ruff を Astral 公式イメージからコピー。uv と同じ仕組み。
 COPY --from=ghcr.io/astral-sh/ruff:0.16.0 /ruff /usr/local/bin/
@@ -52,7 +52,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # chown = change owner。また、このベースイメージには node というユーザーとグループが定義済み。
 ENV UV_PYTHON_INSTALL_DIR=/opt/uv-python
 
-RUN uv python install 3.13 \
+RUN uv python install 3.14 \
     && uv venv /opt/uv-venv --python 3.13 \
     && uv pip install --python /opt/uv-venv/bin/python \
     pypdf \

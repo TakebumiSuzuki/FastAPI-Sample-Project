@@ -43,14 +43,21 @@ def login_user(
             detail="Incorrect email or password",
         )
     # subは文字列にする必要がある。
-    access_token = create_access_token(data={"sub": str(user.id), "email": user.email})
+    access_token = create_access_token(
+        data={"sub": str(user.id), "email": user.email},
+    )
     refresh_token = create_refresh_token(
-        data={"sub": str(user.id), "email": user.email}
+        data={"sub": str(user.id), "email": user.email},
     )
     response.set_cookie(key="refresh_token", value=refresh_token, httponly=True)
     return {"access_token": access_token}
 
 
-# /users/refresh
+@router.post("users/logout", status_code=204)
+def logout_user(
+    db_session: Annotated[Session, Depends(get_db_session)],
+) -> None:
+    pass
 
-# /users/logout
+
+# /users/refresh
