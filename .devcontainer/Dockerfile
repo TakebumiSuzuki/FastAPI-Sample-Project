@@ -53,7 +53,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 ENV UV_PYTHON_INSTALL_DIR=/opt/uv-python
 
 RUN uv python install 3.14 \
-    && uv venv /opt/uv-venv --python 3.13 \
+    && uv venv /opt/uv-venv --python 3.14 \
     && uv pip install --python /opt/uv-venv/bin/python \
     pypdf \
     pdfplumber \

@@ -1,12 +1,13 @@
 from typing import Annotated
 
-from fastapi import Body, Depends, HTTPException, Response
+from fastapi import Body, Cookie, Depends, HTTPException, Response
 from fastapi.routing import APIRouter
 from sqlalchemy.orm import Session
 
 from app.core.security import create_access_token, create_refresh_token
 from app.crud import user as crud_user
-from app.deps import get_db_session
+from app.deps import get_db_session, get_user
+from app.models import User
 from app.schemas import Token, UserCreate, UserLogin, UserPublic
 
 router = APIRouter(prefix="/users", tags=["users"])
@@ -53,11 +54,14 @@ def login_user(
     return {"access_token": access_token}
 
 
-@router.post("users/logout", status_code=204)
+@router.post("/logout", status_code=204)
 def logout_user(
     db_session: Annotated[Session, Depends(get_db_session)],
+    response: Response,
+    user: Annotated[User, Depends(get_user)],
+    refresh_token: Annotated[str | None, Cookie()] = None,
 ) -> None:
-    pass
+    response.delete_cookie("refresh_token")
 
 
 # /users/refresh

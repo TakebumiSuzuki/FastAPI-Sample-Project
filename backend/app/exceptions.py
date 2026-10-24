@@ -48,3 +48,10 @@ class UserAlreadyExists(HTTPException):
             status_code=409, detail=f"User email: {user_email} already exists"
         )
         self.details = {"user_email": user_email}
+
+
+class AuthenticationError(HTTPException):
+    code = "invalid_credentials"
+
+    def __init__(self):
+        super().__init__(status_code=401, detail="Invalid credentials.")

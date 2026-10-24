@@ -1,10 +1,15 @@
 from collections.abc import Generator
-from typing import Annotated
+from typing import Annotated, Any
 
-from fastapi import Query
+import jwt
+from fastapi import Depends, Query
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
+from app.core.config import get_settings
 from app.core.session import SessionLocal
+from app.exceptions import AuthenticationError
+from app.models import User
 
 
 class CommonQueryParams:
@@ -23,3 +28,27 @@ def get_db_session() -> Generator[Session]:
         yield db_session
     finally:
         db_session.close()
+
+
+def get_user(
+    db_session: Annotated[Session, Depends(get_db_session)],
+    credentials: Annotated[HTTPAuthorizationCredentials, Depends(HTTPBearer())],
+) -> User:
+    settings = get_settings()
+    try:
+        payload: dict[str, Any] = jwt.decode(
+            credentials.credentials,
+            settings.secret_key,
+            algorithms=[settings.algorithm],
+        )
+        if payload.get("type") != "access":
+            raise AuthenticationError()
+        id = int(payload["sub"])
+    except jwt.InvalidTokenError, KeyError, ValueError:
+        raise AuthenticationError()
+
+    # select(User).where(User.id == id) を書いて scalar_one_or_none() するのと同じ
+    user = db_session.get(User, id)
+    if not user:
+        raise AuthenticationError()
+    return user
