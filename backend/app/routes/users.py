@@ -81,6 +81,7 @@ def logout_user(
         )
 
 
+# refreshでは、POSTメソッドで、ペイロード空、status_code=200 にするのが通常。
 @router.post("/refresh", status_code=200, response_model=Token)
 def refresh_tokens(
     db_session: Annotated[Session, Depends(get_db_session)],

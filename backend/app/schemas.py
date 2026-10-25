@@ -102,6 +102,7 @@ class UserPublic(BaseModel):
 
 
 # 送る直前（サーバーからクライアントへレスポンスを返す時）に使う
+# token_type は　OAuth の仕様で必須項目のため慣習的に入れられるが、本アプリでは不要。
 class Token(BaseModel):
     access_token: str
     token_type: str = "bearer"

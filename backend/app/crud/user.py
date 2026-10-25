@@ -93,6 +93,8 @@ def reissue_tokens(
         if tk.active == True:
             tokens_to_revoke.append(tk)
             tk.active = False
+    # refresh tokenがそもそもホワイトリストに登録されていなかった場合、または、
+    # 全て revoke 済みになっていた場合(=盗まれて既に対処済み)
     if len(tokens_to_revoke) == 0:
         raise AuthenticationError()
 
