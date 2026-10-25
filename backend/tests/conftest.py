@@ -54,3 +54,21 @@ def seed_users(db_session: Session):
     for user_data in users_data:
         user_in = UserCreate.model_validate(user_data)
         create_user(db_session=db_session, user_in=user_in)
+
+
+@pytest.fixture()
+def logged_in_context(client, seed_users):
+    response = client.post(
+        "/users/login",
+        json={
+            "email": "test_user_1@gmail.com",
+            "password": "Test_password_1!",
+        },
+    )
+    access_token = response.json()["access_token"]
+    refresh_token = response.cookies["refresh_token"]
+    return {
+        "logged_in_client": client,
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+    }

@@ -1,3 +1,4 @@
+# DB を使わない JWT の検証部分のロジックをここに入れる
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -48,3 +49,15 @@ def create_refresh_token(data: dict[str, Any]) -> str:
     token = jwt.encode(to_encode, settings.secret_key, algorithm=settings.algorithm)
 
     return token
+
+
+def decode_token(token: str, expected_type: str) -> dict[str, Any]:
+    settings = get_settings()
+    payload = jwt.decode(
+        token,
+        key=settings.secret_key,
+        algorithms=settings.algorithm,
+    )
+    if "type" not in payload or payload["type"] != expected_type:
+        raise jwt.InvalidTokenError("unexpected token type")
+    return payload

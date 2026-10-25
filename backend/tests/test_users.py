@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.core.security import verify_password
-from app.models import User
+from app.models import RefreshToken, User
 
 
 @pytest.mark.parametrize(
@@ -75,7 +75,11 @@ def test_register_invalid_password(client: TestClient, password: str):
     assert "password" in data["error"]["details"]
 
 
-def test_login_user(client: TestClient, seed_users):
+def test_login_user(
+    db_session: Session,
+    client: TestClient,
+    seed_users,
+):
     response = client.post(
         "/users/login",
         json={
@@ -107,6 +111,14 @@ def test_login_user(client: TestClient, seed_users):
     )
     assert refresh_payload["email"] == "test_user_1@gmail.com"
     assert refresh_payload["type"] == "refresh"
+
+    stmt = select(RefreshToken).where(
+        RefreshToken.refresh_token == refresh_token,
+        RefreshToken.user_id == int(refresh_payload["sub"]),
+    )
+    saved_refresh_token = db_session.execute(stmt).scalar_one()
+    assert saved_refresh_token is not None
+    assert saved_refresh_token.refresh_token == refresh_token
 
 
 @pytest.mark.parametrize(
@@ -157,3 +169,44 @@ def test_user_login_invalid_payload(
     )
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "validation_error"
+
+
+def test_user_logout(db_session, logged_in_context):
+    logged_in_client = logged_in_context["logged_in_client"]
+    access_token = logged_in_context["access_token"]
+    refresh_token = logged_in_context["refresh_token"]
+
+    jwt_payload = jwt.decode(
+        access_token, key=get_settings().secret_key, algorithms=get_settings().algorithm
+    )
+    user_id = jwt_payload["sub"]
+    stmt = select(RefreshToken).where(
+        RefreshToken.user_id == user_id,
+        RefreshToken.refresh_token == refresh_token,
+    )
+    result1 = db_session.execute(stmt).scalar_one_or_none()
+    assert result1 is not None
+    assert result1.active == True
+    assert result1.refresh_token == refresh_token
+
+    response = logged_in_client.post(
+        "/users/logout", json={}, headers={"Authorization": f"Bearer {access_token}"}
+    )
+    assert response.status_code == 204
+
+    result2 = db_session.execute(stmt).scalar_one_or_none()
+    assert result2 is not None
+    assert result2.active == False
+    assert "refresh_token" not in logged_in_client.cookies
+
+
+def test_user_logout_by_unauthorized_user(client):
+    response = client.post(
+        "/users/logout",
+        json={},
+        # もし headers を渡さない場合、get_user 内のトークン検証に到達する前に FastAPIの標準機能で弾かれ、code が "invalid_credentials" ではなく"http_error"（※ヘッダーが存在しないという共通エラー）になります。
+        headers={"Authorization": "Bearer fake_access_token"},
+    )
+    assert response.status_code == 401
+    data = response.json()
+    assert data["error"]["code"] == "invalid_credentials"

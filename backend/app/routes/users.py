@@ -50,7 +50,18 @@ def login_user(
     refresh_token = create_refresh_token(
         data={"sub": str(user.id), "email": user.email},
     )
-    response.set_cookie(key="refresh_token", value=refresh_token, httponly=True)
+    crud_user.register_refresh_token(
+        db_session=db_session,
+        user_id=user.id,
+        refresh_token=refresh_token,
+    )
+
+    response.set_cookie(
+        key="refresh_token",
+        value=refresh_token,
+        httponly=True,
+        path="/users",
+    )
     return {"access_token": access_token}
 
 
@@ -61,7 +72,31 @@ def logout_user(
     user: Annotated[User, Depends(get_user)],
     refresh_token: Annotated[str | None, Cookie()] = None,
 ) -> None:
-    response.delete_cookie("refresh_token")
+    # サーバーは Cookie を直接消せないため、同じ名前・path で期限切れ(Max-Age=0)の
+    # Cookie を送り、ブラウザに上書き→即削除させる。path が違うと別物扱いで消えない。
+    response.delete_cookie("refresh_token", path="/users")
+    if refresh_token:
+        crud_user.revoke_refresh_token(
+            db_session=db_session, refresh_token=refresh_token
+        )
 
 
-# /users/refresh
+@router.post("/refresh", status_code=200, response_model=Token)
+def refresh_tokens(
+    db_session: Annotated[Session, Depends(get_db_session)],
+    response: Response,
+    # | None がないと、422のエラーとして処理されるが、401のエラーとして
+    # 処理したいので、一旦 Noneとして関数を実行させるようにしている。
+    refresh_token: Annotated[str | None, Cookie()] = None,
+) -> dict[str, str]:
+    new_access_token, new_refresh_token = crud_user.reissue_tokens(
+        db_session=db_session,
+        refresh_token=refresh_token,
+    )
+    response.set_cookie(
+        key="refresh_token",
+        value=new_refresh_token,
+        httponly=True,
+        path="/users",
+    )
+    return {"access_token": new_access_token}

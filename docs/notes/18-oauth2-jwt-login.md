@@ -57,9 +57,11 @@
 
 ### 7. リフレッシュトークン管理モデル (`backend/app/models/refresh_token.py`) とログアウト (`POST /users/logout`)
 - `RefreshToken(Base)`: ホワイトリスト兼監査履歴用のテーブル（`id`, `user_id`, `refresh_token`, `active`）。
+- `revoke_refresh_token(db_session, refresh_token)` (`backend/app/crud/user.py`):
+  - `RefreshToken.refresh_token == refresh_token` で検索し、`scalars().all()` で取得した全レコード（`token_records`）を `for` ループで `active = False` に更新。
 - `@router.post("/logout", status_code=204)`:
   - 状態を変更する操作のため `POST` で定義。
-  - `response.delete_cookie("refresh_token")` でクライアント側の Cookie を削除し、DB 上の該当トークンを無効化する。
+  - `response.delete_cookie("refresh_token")` で Cookie を削除し、Cookie に `refresh_token` があれば `revoke_refresh_token` で DB 側も無効化する（Cookie の有無にかかわらず `204` を返す冪等な設計）。
 
 ---
 
@@ -137,3 +139,74 @@ FastAPI の内部ラッパー関数が一時的な `Response` インスタンス
 **A.**
 - **`unique=True` を付けない理由**：PyJWT の `exp` は秒単位の整数に変換されるため、同一ユーザーが1秒以内に2回ログインすると（テスト実行時など）全く同じトークン文字列が生成され、ユニーク制約違反でエラーになるため。
 - **`ForeignKey` を付けない理由**：`user_id` は外部入力ではなく認証直後の実在する `user.id` のみが入るため不正値の心配がなく、また将来ユーザーを削除しても監査履歴を独立して残せるため。
+
+### Q14. JWT はパスワードハッシュと違い「元に戻せる（可逆）」のか？ 同じ辞書からは同じ文字列になる？
+**A.**
+- **可逆性**：パスワードハッシュ（一方通行）と違い、JWT のデータ部分（ヘッダ・ペイロード）は単なる **Base64 変換**なので可逆であり、秘密鍵がなくても誰でも元の辞書に復元して中身を読める（末尾の「署名」部分のみが改ざん検知用のハッシュ計算）。そのため、JWT にパスワード等の秘密情報は入れない。
+- **同じ辞書なら同じ文字列**：パスワードハッシュのように毎回ランダムなソルトを混ぜる仕組みはないため、辞書の中身（`sub`、`email`、秒単位の `exp`、`type`）と秘密鍵が同じなら、生成される JWT 文字列も完全に同一になる。
+
+### Q15. ログアウト処理（`logout_user` / `revoke_refresh_token`）の設計のポイントは？
+**A.**
+- **`refresh_token` の `jwt.decode` 検証が不要な理由**：DB には自サーバーが発行したトークンしか入っていないため DB 検索自体が検証になり、また期限切れトークンであってもエラーにせずログアウト完了にするのが自然なため。
+- **検索条件に `user.id` が不要な理由**：`refresh_token` 文字列自体に `sub`（`user.id`）が含まれており、他人のトークンと文字列が一致することはないため。
+- **`scalars().all()` と `for` ループを使う理由**：1秒以内の連続ログインで同一文字列が複数行あった場合でも、`scalar_one_or_none()` のように例外で落ちずに全件 `active = False` にできるため（0件のときもそのまま素通りできる）。
+- **冪等性（べきとうせい / idempotency）**：Cookie に `refresh_token` があってもなくても、何度呼んでも同じ「ログアウト済み状態」になり `204` が返る性質のこと。
+
+### Q16. `authenticate_user` の中でトークン登録（`register_refresh_token`）や commit を一括で行わない理由は？
+**A.**
+- **commit する変更がない**：`authenticate_user` は DB からユーザーを検索してパスワードを照合する「読み取り処理」だけを行うため、commit するデータ自体が存在しない。
+- **責務の分離（単一責任の原則）**：`authenticate_user` の役割は「認証（メールとパスワードの照合）」であり、「トークンの発行・永続化」ではない。トークン生成は認証成功後にルート層で行われるため、生成された文字列を DB に保存する `register_refresh_token` もその直後に呼ぶのが自然。
+
+### Q17. ログイン状態を作るフィクスチャーと、未認証テストでのクライアントの使い分けは？
+**A.**
+- **ログイン状態を作るフィクスチャー（`logged_in_context`）**：
+  - 認証必須のエンドポイント（正常系のログアウトや、今後の保護されたルート）をテストする際、都度ログイン処理を書く手間を省くために使う。
+- **未認証テストで通常の `client` を使う理由**：
+  - 未認証（ログインしていない状態）の振る舞いを確かめるテストで、事前にユーザー作成やログイン処理を行うのはテストの意図と矛盾し、実行速度も無駄になる。まっさらな素の `client` からリクエストを送るのが最もシンプルで意図が明確になる。
+- **ヘッダー有無とエラーの種類（検証レイヤーの違い）**：
+  - `headers={"Authorization": "Bearer fake_token"}`（不正なトークン）：トークンの中身を検証するアプリのロジック（`get_user`）に到達し、独自の認証エラー（`code: "invalid_credentials"`）になる。
+  - ヘッダーなし：FastAPI の標準セキュリティ機構（`HTTPBearer`）で手前で弾かれ、共通エラー（`code: "http_error"`, `message: "Not authenticated"`）になる。
+
+### Q18. DB 検証や 204 レスポンスをテストする際の注意点は？
+**A.**
+- **モデルインスタンスと値の比較**：`scalar_one()` 等で取得した結果はテーブルモデルのインスタンス（オブジェクト）であるため、トークン文字列と比較する場合は属性を指定して `saved.refresh_token == token` と比較する。
+- **論理削除の検証**：レコードを `DELETE` するのではなく `active = False` に更新する論理削除の場合、レコードが消える（`is None`）のではなく、レコードが存在した上で `result.active is False` であることを検証する。
+- **204 (No Content) レスポンスの検証**：ステータスコード `204` は仕様上レスポンスボディが空のため、`response.json()` を呼ぶと JSON デコードエラーになる。本文が空であることを検証したい場合は `response.text == ""`（または `not response.content`）を用いる。
+
+### Q19. トークンの中身に不備があるとき、401 / 422 / 500 のどれにすべき？
+**A.**
+- **署名・期限・`type` の不備 → 401**：トークンは身元証明なので、中身がおかしければ「認証失敗」。422 は FastAPI（Pydantic）がリクエストの形式・型の不備に対して返すもので、認証ロジックの判定には使わない。
+- **キャッチし忘れると 500**：`payload["type"]` の `KeyError` などを放置すると、クライアント起因なのにサーバーのバグ（500）扱いになる。
+- **署名検証を通った後の `sub` / `email` 欠落 → 500 のままでよい**：署名が正しい＝自サーバーが発行したトークンなので、欠落は発行側のバグ。401 にするとバグが「認証失敗」に紛れて気づきにくくなる（`secret_key` が漏れていない前提）。
+
+### Q20. `scalar_one()` / `scalar_one_or_none()` / `scalars()` の使い分けは？
+**A.** `scalar_one()` は「ちょうど1件」が前提で、0件なら `NoResultFound`、2件以上なら `MultipleResultsFound` を投げる（未処理なら 500）。0件や重複がありうる検索（同一秒の連続ログインで同じトークン文字列が複数行ある場合など）は `scalars()` で受けてループ・件数判定する。
+
+### Q21. リフレッシュ時の `active` 検証を `revoke_refresh_token` に入れない理由は？
+**A.** 目的が逆だから。ログアウトは「既に無効・不在でも 204 で終わる（冪等）」べきで、リフレッシュは「無効・不在なら 401 で拒否」すべき。`revoke_refresh_token` に 401 を入れるとログアウトが壊れるため、検証はリフレッシュ側の関数で行う。
+
+### Q22. JWT の `sub` と重複するのに `RefreshToken.user_id` カラムを持つ理由は？
+**A.** 「パスワード変更時に全端末ログアウト」「ログイン中端末の一覧」など、ユーザー単位の操作を `WHERE user_id = ?` で行うため。カラムがないと全トークンをデコードして `sub` を調べるしかない。トークン1件の特定には不要なので、今の機能だけ見れば冗長。
+
+### Q23. トークン処理を `core/security.py` と `crud` にどう分ける？
+**A.**
+- **DB を使わない JWT 検証（decode + `type` チェック）→ `security.py`**：`decode_token(token, expected_type)` にまとめ、`deps.py` の `get_user` と `reissue_tokens` の重複をなくす。
+- **DB 操作（検索・無効化・登録）→ `crud`**。
+- **core 層は HTTP の例外を投げない**：`type` 不一致も `jwt.InvalidTokenError` で投げ、呼び出し側で `AuthenticationError`（401）に変換する。core 層が HTTP（FastAPI）に依存しない。
+- **命名**：古いリフレッシュトークンを無効化して新しいものを発行することを「トークンローテーション」と呼ぶ。`refresh_tokens` は名詞（モデル名・テーブル名）とも読めて紛らわしい。
+
+### Q24. `settings = get_settings()` をモジュールのトップに書くべき？
+**A.** 書かない方がよい。`get_settings` は `@lru_cache` 付きなので関数内で毎回呼んでもコストはほぼない。トップに書くと import 時の設定で固定され、テストで `get_settings.cache_clear()` しても反映されない。また import しただけで `.env` を読みにいく。
+
+### Q25. 例外まわりの Python の書き方
+**A.**
+- **`except A, B, C:`**：Python 3.14 からは括弧なしでも OK（PEP 758）。それ以前は `except (A, B, C):` が必須。
+- **`raise ... from None`**：`except` 内で別の例外を投げるとき、元の例外がエラー表示に連鎖して出るのを止める（ruff の B904 が指摘する）。
+- **`return a, b` と `return (a, b)` は同じ**：タプルを作るのは括弧ではなくカンマ。
+
+### Q26. Cookie の `path` と `delete_cookie` の仕組みは？
+**A.**
+- **`path` は1つだけ**：カンマ区切りで複数指定はできない（カンマも path の文字列の一部になる）。
+- **前方一致で送られる**：`path="/users"` なら `/users`・`/users/refresh`・`/users/logout` には送られ、`/items` や `/usersXYZ` には送られない（直後が `/` のときだけ一致）。refresh と logout の両方で Cookie を読むので `"/users"` にしている。
+- **set と delete で path をそろえる**：ブラウザは Cookie を「名前 + ドメイン + path」で区別する。`delete_cookie` の既定値は `path="/"` なので、`/users` で保存したら削除時も `path="/users"` が必要。
+- **`delete_cookie` の正体**：サーバーはブラウザの Cookie を直接消せない。同じ名前・path で `Max-Age=0` の `Set-Cookie` を送ると、ブラウザが上書き → 期限切れ → 即削除する（RFC 6265 5.3 節）。
