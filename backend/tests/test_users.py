@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
-from app.core.security import verify_password
+from app.core.security import verify_password, decode_token
 from app.models import RefreshToken, User
 
 
@@ -210,3 +210,65 @@ def test_user_logout_by_unauthorized_user(client):
     assert response.status_code == 401
     data = response.json()
     assert data["error"]["code"] == "invalid_credentials"
+
+
+def test_refresh_tokens(logged_in_context):
+    logged_in_client = logged_in_context["logged_in_client"]
+    access_token = logged_in_context["access_token"]
+    refresh_token = logged_in_context["refresh_token"]
+
+    # access tokenをヘッダーに入れない
+    response = logged_in_client.post("/users/refresh", json={})
+    assert response.status_code == 200
+    assert response.json()["access_token"] != access_token
+    assert response.cookies["refresh_token"] != refresh_token
+
+
+def test_refresh_tokens_with_revoked_refresh_token(logged_in_context):
+    logged_in_client = logged_in_context["logged_in_client"]
+    access_token = logged_in_context["access_token"]
+    refresh_token = logged_in_context["refresh_token"]
+    # ここで logged_in_client.cookies.set("refresh_token", "") とすると
+    # 失敗する件について。結論: これは修正すべきバグではない。
+    # クライアントから refresh_token が送られてこない以上、サーバーには
+    # どの端末のトークンを消すべきか」を知る手段がありません。
+    # ここでエラー（400 等）を返す実装にしたとしても DB側のトークンを消せる
+    # わけではなく、Cookieが消えたユーザーがログアウトすらできずにエラーになる
+    # という害しかありません。
+    # トークン失効の標準仕様（RFC 7009）でも、対象のトークンが存在しない、または
+    # 無効な場合はエラーにせず成功（200 / 204）を返すのがルールになっている。
+    response1 = logged_in_client.post(
+        "/users/logout",
+        json={},
+        headers={"Authorization": f"Bearer {access_token}"},
+    )
+    assert response1.status_code == 204
+
+    logged_in_client.cookies.set("refresh_token", refresh_token)
+    response2 = logged_in_client.post("/users/refresh")
+    assert response2.status_code == 401
+    assert response2.json()["error"]["code"] == "invalid_credentials"
+
+
+def test_refresh_tokens_with_expired_refresh_token(logged_in_context):
+    logged_in_client = logged_in_context["logged_in_client"]
+    refresh_token = logged_in_context["refresh_token"]
+    settings = get_settings()
+    payload = decode_token(token=refresh_token, expected_type="refresh")
+    # "exp"は規格上数値（秒数）なので str()は必要ない。"sub"の方は文字列。
+    payload.update({"exp": 1})
+    expired_refresh_token = jwt.encode(
+        payload=payload, key=settings.secret_key, algorithm=settings.algorithm
+    )
+
+    logged_in_client.cookies.set("refresh_token", expired_refresh_token)
+    response = logged_in_client.post("/users/refresh", json={})
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "invalid_credentials"
+
+
+def test_refresh_tokens_with_invalid_refresh_token(client: TestClient):
+    client.cookies.set("refresh_token", "invalid text")
+    response = client.post("/users/refresh", json={})
+    assert response.status_code == 401
+    assert response.json()["error"]["code"] == "invalid_credentials"

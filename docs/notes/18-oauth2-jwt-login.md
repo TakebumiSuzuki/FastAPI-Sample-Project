@@ -16,11 +16,11 @@
 - `create_access_token(data: dict[str, Any]) -> str`:
   - 呼び出し元の辞書を書き換えないよう `data.copy()` で複製（副作用の防止）。
   - 有効期限 `"exp"` を UTC 時刻の `datetime` 型で設定（`datetime.now(tz=UTC) + timedelta(...)`）。
-  - 種別として `to_encode["type"] = "access"` を付与。
+  - 種別として `to_encode["type"] = "access"`、トークン固有の識別子として `to_encode["jti"] = str(uuid.uuid4())` を付与。
   - `jwt.encode()` でデジタル署名付きの JWT 文字列を生成して返却。
 - `create_refresh_token(data: dict[str, Any]) -> str`:
   - アクセストークンと同様に `data.copy()` で複製。
-  - 有効期限を有料期間（日数単位）で設定し、`to_encode["type"] = "refresh"` を付与して生成。
+  - 有効期限を有効期間（日数単位）で設定し、`to_encode["type"] = "refresh"` と `to_encode["jti"] = str(uuid.uuid4())` を付与して生成。
 
 ### 3. スキーマ定義 (`backend/app/schemas.py`)
 - `UserLogin(BaseModel)`:
@@ -58,7 +58,7 @@
 ### 7. リフレッシュトークン管理モデル (`backend/app/models/refresh_token.py`) とログアウト (`POST /users/logout`)
 - `RefreshToken(Base)`: ホワイトリスト兼監査履歴用のテーブル（`id`, `user_id`, `refresh_token`, `active`）。
 - `revoke_refresh_token(db_session, refresh_token)` (`backend/app/crud/user.py`):
-  - `RefreshToken.refresh_token == refresh_token` で検索し、`scalars().all()` で取得した全レコード（`token_records`）を `for` ループで `active = False` に更新。
+  - `RefreshToken.refresh_token == refresh_token` で検索し、`scalar_one_or_none()` で取得したレコード（存在する場合）を `active = False` に更新。
 - `@router.post("/logout", status_code=204)`:
   - 状態を変更する操作のため `POST` で定義。
   - `response.delete_cookie("refresh_token")` で Cookie を削除し、Cookie に `refresh_token` があれば `revoke_refresh_token` で DB 側も無効化する（Cookie の有無にかかわらず `204` を返す冪等な設計）。
@@ -137,19 +137,19 @@ FastAPI の内部ラッパー関数が一時的な `Response` インスタンス
 
 ### Q13. `RefreshToken` モデルに `unique=True` や `ForeignKey` を付けない理由は？
 **A.**
-- **`unique=True` を付けない理由**：PyJWT の `exp` は秒単位の整数に変換されるため、同一ユーザーが1秒以内に2回ログインすると（テスト実行時など）全く同じトークン文字列が生成され、ユニーク制約違反でエラーになるため。
+- **`unique=True` を付けない理由**：トークン生成時に `jti`（`uuid.uuid4()`）を付与しており、かつサーバー自身が生成した値しか保存しないため、論理的に同じトークン文字列が重複することがないため。
 - **`ForeignKey` を付けない理由**：`user_id` は外部入力ではなく認証直後の実在する `user.id` のみが入るため不正値の心配がなく、また将来ユーザーを削除しても監査履歴を独立して残せるため。
 
 ### Q14. JWT はパスワードハッシュと違い「元に戻せる（可逆）」のか？ 同じ辞書からは同じ文字列になる？
 **A.**
 - **可逆性**：パスワードハッシュ（一方通行）と違い、JWT のデータ部分（ヘッダ・ペイロード）は単なる **Base64 変換**なので可逆であり、秘密鍵がなくても誰でも元の辞書に復元して中身を読める（末尾の「署名」部分のみが改ざん検知用のハッシュ計算）。そのため、JWT にパスワード等の秘密情報は入れない。
-- **同じ辞書なら同じ文字列**：パスワードハッシュのように毎回ランダムなソルトを混ぜる仕組みはないため、辞書の中身（`sub`、`email`、秒単位の `exp`、`type`）と秘密鍵が同じなら、生成される JWT 文字列も完全に同一になる。
+- **同じ辞書なら同じ文字列（`jti` による一意化）**：JWT 自体にはパスワードハッシュのように毎回ランダムなソルトを混ぜる仕組みはないため、辞書の中身（`sub`、`email`、秒単位の `exp`、`type`）と秘密鍵が同じなら、同一秒内の発行で全く同じ JWT 文字列になってしまう。これを防ぐため、ペイロードに `jti`（JWT ID：`uuid.uuid4()` によるランダムな一意識別子）を含めて毎回異なるトークン文字列になるようにしている。
 
 ### Q15. ログアウト処理（`logout_user` / `revoke_refresh_token`）の設計のポイントは？
 **A.**
 - **`refresh_token` の `jwt.decode` 検証が不要な理由**：DB には自サーバーが発行したトークンしか入っていないため DB 検索自体が検証になり、また期限切れトークンであってもエラーにせずログアウト完了にするのが自然なため。
 - **検索条件に `user.id` が不要な理由**：`refresh_token` 文字列自体に `sub`（`user.id`）が含まれており、他人のトークンと文字列が一致することはないため。
-- **`scalars().all()` と `for` ループを使う理由**：1秒以内の連続ログインで同一文字列が複数行あった場合でも、`scalar_one_or_none()` のように例外で落ちずに全件 `active = False` にできるため（0件のときもそのまま素通りできる）。
+- **`scalar_one_or_none()` を使う理由**：`jti` によってトークン文字列は常に一意（該当は0件か1件）になるため、`scalar_one_or_none()` で取得し、存在するときのみ `active = False` に更新する（0件のときも例外にならず `None` が返る）。
 - **冪等性（べきとうせい / idempotency）**：Cookie に `refresh_token` があってもなくても、何度呼んでも同じ「ログアウト済み状態」になり `204` が返る性質のこと。
 
 ### Q16. `authenticate_user` の中でトークン登録（`register_refresh_token`）や commit を一括で行わない理由は？
@@ -180,7 +180,7 @@ FastAPI の内部ラッパー関数が一時的な `Response` インスタンス
 - **署名検証を通った後の `sub` / `email` 欠落 → 500 のままでよい**：署名が正しい＝自サーバーが発行したトークンなので、欠落は発行側のバグ。401 にするとバグが「認証失敗」に紛れて気づきにくくなる（`secret_key` が漏れていない前提）。
 
 ### Q20. `scalar_one()` / `scalar_one_or_none()` / `scalars()` の使い分けは？
-**A.** `scalar_one()` は「ちょうど1件」が前提で、0件なら `NoResultFound`、2件以上なら `MultipleResultsFound` を投げる（未処理なら 500）。0件や重複がありうる検索（同一秒の連続ログインで同じトークン文字列が複数行ある場合など）は `scalars()` で受けてループ・件数判定する。
+**A.** `scalar_one()` は「ちょうど1件」が前提で、0件なら `NoResultFound`、2件以上なら `MultipleResultsFound` を投げる（未処理なら 500）。0件か1件の検索（`jti` で一意化されたトークンの検索など）は `scalar_one_or_none()` を使い、複数件ありうる検索は `scalars()` で受ける。
 
 ### Q21. リフレッシュ時の `active` 検証を `revoke_refresh_token` に入れない理由は？
 **A.** 目的が逆だから。ログアウトは「既に無効・不在でも 204 で終わる（冪等）」べきで、リフレッシュは「無効・不在なら 401 で拒否」すべき。`revoke_refresh_token` に 401 を入れるとログアウトが壊れるため、検証はリフレッシュ側の関数で行う。

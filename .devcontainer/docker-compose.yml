@@ -2,6 +2,7 @@ services:
   claude-code:
     build:
       context: .
+      pull: true
     # VS Code がアタッチするためコンテナを生かし続ける
     command: sleep infinity
     # user: は指定しない。Dockerfile の USER node がデフォルトユーザーになる。

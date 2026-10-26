@@ -1,4 +1,5 @@
 # DB を使わない JWT の検証部分のロジックをここに入れる
+import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -33,6 +34,7 @@ def create_access_token(data: dict[str, Any]) -> str:
     # access_token も refresh_token もデータとしては区別がない
     # typeはアプリ側が区別のために入れる独自項目です。
     to_encode["type"] = "access"
+    to_encode["jti"] = str(uuid.uuid4())
 
     token = jwt.encode(to_encode, settings.secret_key, algorithm=settings.algorithm)
 
@@ -45,6 +47,7 @@ def create_refresh_token(data: dict[str, Any]) -> str:
     to_encode = data.copy()
     to_encode["exp"] = expire
     to_encode["type"] = "refresh"
+    to_encode["jti"] = str(uuid.uuid4())
 
     token = jwt.encode(to_encode, settings.secret_key, algorithm=settings.algorithm)
 

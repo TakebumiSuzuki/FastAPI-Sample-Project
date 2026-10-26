@@ -54,14 +54,10 @@ def revoke_refresh_token(
     refresh_token: str,
 ) -> None:
     stmt = select(RefreshToken).where(RefreshToken.refresh_token == refresh_token)
-    # refresh_token の expは秒単位なので、同一人物が高速にログインすると全く
-    # 同じ文字列の refresh_tokenを連続して取得することになる。
-    token_records = db_session.execute(stmt).scalars().all()
-
-    for token_record in token_records:
+    token_record = db_session.execute(stmt).scalar_one_or_none()
+    if token_record is not None:
         token_record.active = False
-
-    db_session.commit()
+        db_session.commit()
 
 
 def register_refresh_token(
@@ -87,16 +83,12 @@ def reissue_tokens(
         raise AuthenticationError()
 
     stmt = select(RefreshToken).where(RefreshToken.refresh_token == refresh_token)
-    stored_refresh_tokens = db_session.execute(stmt).scalars()
-    tokens_to_revoke = []
-    for tk in stored_refresh_tokens:
-        if tk.active == True:
-            tokens_to_revoke.append(tk)
-            tk.active = False
+    stored_refresh_token = db_session.execute(stmt).scalar_one_or_none()
     # refresh tokenがそもそもホワイトリストに登録されていなかった場合、または、
-    # 全て revoke 済みになっていた場合(=盗まれて既に対処済み)
-    if len(tokens_to_revoke) == 0:
+    # 既に revoke 済みになっていた場合(=盗まれて既に対処済み)
+    if stored_refresh_token is None or not stored_refresh_token.active:
         raise AuthenticationError()
+    stored_refresh_token.active = False
 
     user_id_str = payload["sub"]
     email = payload["email"]

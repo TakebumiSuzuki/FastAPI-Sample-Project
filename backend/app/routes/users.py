@@ -65,6 +65,11 @@ def login_user(
     return {"access_token": access_token}
 
 
+# PCでログアウトしたときにスマホやタブレットまで全て強制ログアウトされると
+# 使い勝手が悪いため、以下のような通常のログアウト（POST /users/logout）は
+# 操作した端末の Cookie（refresh_token）だけを無効化する。
+# 全端末ログアウト（user_id指定での一括無効化）は、パスワード変更時や
+# すべての端末からログアウトするという専用ボタンとして別枠で用意するのが定石。
 @router.post("/logout", status_code=204)
 def logout_user(
     db_session: Annotated[Session, Depends(get_db_session)],
