@@ -1,3 +1,5 @@
+from fastapi.testclient import TestClient
+
 from app.models.category import Category
 
 
@@ -14,40 +16,85 @@ def test_get_categories(client, db_session):
     assert data[1]["name"] == "cosmetics"
 
 
-def test_create_category(client):
-    response = client.post("/categories", json={"name": "foods"})
+def test_create_category(logged_in_context):
+    logged_in_client: TestClient = logged_in_context["logged_in_client"]
+    access_token = logged_in_context["access_token"]
+    response = logged_in_client.post(
+        "/categories",
+        json={"name": "foods"},
+        headers={"Authorization": f"Bearer {access_token}"},
+    )
     assert response.status_code == 201
     data = response.json()
     assert data["name"] == "foods"
 
 
-def test_create_category_name_too_short(client):
-    response = client.post("/categories", json={"name": "sa"})
+def test_create_category_name_too_short(logged_in_context):
+    logged_in_client: TestClient = logged_in_context["logged_in_client"]
+    access_token = logged_in_context["access_token"]
+    response = logged_in_client.post(
+        "/categories",
+        json={"name": "sa"},
+        headers={"Authorization": f"Bearer {access_token}"},
+    )
     assert response.status_code == 422
     details = response.json()["error"]["details"]
     assert "name" in details
 
 
-def test_create_category_name_min_length_ok(client):
-    response = client.post("/categories", json={"name": "sal"})
+def test_create_category_name_min_length_ok(logged_in_context):
+    logged_in_client: TestClient = logged_in_context["logged_in_client"]
+    access_token = logged_in_context["access_token"]
+    response = logged_in_client.post(
+        "/categories",
+        json={"name": "sal"},
+        headers={"Authorization": f"Bearer {access_token}"},
+    )
     assert response.status_code == 201
 
 
-def test_create_category_name_max_length_ok(client):
-    response = client.post("/categories", json={"name": "a" * 30})
+def test_create_category_name_max_length_ok(logged_in_context):
+    logged_in_client: TestClient = logged_in_context["logged_in_client"]
+    access_token = logged_in_context["access_token"]
+    response = logged_in_client.post(
+        "/categories",
+        json={"name": "a" * 30},
+        headers={"Authorization": f"Bearer {access_token}"},
+    )
     assert response.status_code == 201
 
 
-def test_create_category_name_too_long(client):
-    long_char = "a" * 31
-    response = client.post("/categories", json={"name": long_char})
+def test_create_category_name_too_long(logged_in_context):
+    logged_in_client: TestClient = logged_in_context["logged_in_client"]
+    access_token = logged_in_context["access_token"]
+    response = logged_in_client.post(
+        "/categories",
+        json={"name": "a" * 31},
+        headers={"Authorization": f"Bearer {access_token}"},
+    )
     assert response.status_code == 422
     details = response.json()["error"]["details"]
     assert "name" in details
 
 
-def test_create_category_extra_field_forbidden(client):
-    response = client.post("/categories", json={"name": "ust", "extra_field": "value"})
+def test_create_category_extra_field_forbidden(logged_in_context):
+    logged_in_client: TestClient = logged_in_context["logged_in_client"]
+    access_token = logged_in_context["access_token"]
+    response = logged_in_client.post(
+        "/categories",
+        json={"name": "ust", "extra_field": "value"},
+        headers={"Authorization": f"Bearer {access_token}"},
+    )
     assert response.status_code == 422
     details = response.json()["error"]["details"]
     assert "extra_field" in details
+
+
+def test_create_category_unauthorized(client: TestClient):
+    response = client.post(
+        "/categories",
+        json={"name": "foods"},
+    )
+    assert response.status_code == 401
+    # ヘッダーなしでリクエストした場合は code が "invalid_credentials" ではなく"http_error" になる
+    assert response.json()["error"]["code"] == "http_error"

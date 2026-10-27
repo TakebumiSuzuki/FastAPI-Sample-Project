@@ -49,6 +49,6 @@ def get_user(
 
     # select(User).where(User.id == id) を書いて scalar_one_or_none() するのと同じ
     user = db_session.get(User, id)
-    if not user:
+    if not user or user.is_active == False:
         raise AuthenticationError()
     return user

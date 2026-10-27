@@ -1,7 +1,10 @@
 from app.models import Category
 
 
-def test_create_item(client, db_session):
+def test_create_item(
+    db_session,
+    client,
+):
     # ① 前体データのカテゴリを作成してコミット
     category = Category(name="家電製品")
     db_session.add(category)

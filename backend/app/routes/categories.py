@@ -5,8 +5,8 @@ from fastapi import APIRouter, Body, Depends
 from sqlalchemy.orm import Session
 
 from app.crud import category as crud
-from app.deps import get_db_session
-from app.models.category import Category
+from app.deps import get_db_session, get_user
+from app.models import Category
 from app.schemas import CategoryCreate, CategoryPublic
 
 router = APIRouter(prefix="/categories", tags=["categories"])
@@ -20,7 +20,9 @@ def get_categories(
     return categories
 
 
-@router.post("", response_model=CategoryPublic, status_code=201)
+@router.post(
+    "", response_model=CategoryPublic, status_code=201, dependencies=[Depends(get_user)]
+)
 def create_category(
     new_category: Annotated[CategoryCreate, Body()],
     db_session: Annotated[Session, Depends(get_db_session)],
