@@ -1,6 +1,9 @@
+import asyncio
 from logging.config import fileConfig
 
-from sqlalchemy import engine_from_config, pool
+from sqlalchemy import pool
+from sqlalchemy.engine import Connection
+from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from alembic import context
 from app.core.config import get_settings
@@ -54,29 +57,36 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 
-def run_migrations_online() -> None:
+def do_run_migrations(connection: Connection) -> None:
+    context.configure(
+        render_as_batch=True, connection=connection, target_metadata=target_metadata
+    )
+    with context.begin_transaction():
+        context.run_migrations()
+
+
+async def run_async_migrations_online() -> None:
     """Run migrations in 'online' mode.
 
     In this scenario we need to create an Engine
     and associate a connection with the context.
 
     """
-    connectable = engine_from_config(
+    connectable = async_engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
     )
+    # NullPool（プールせず毎回新規接続する設定）を使っているため、async withに入るたびに「実際に DB ファイル（または DB サーバー）へ接続を開くI/O」が発生し、ドライバの await futureによってイベントループへ制御が返ります
+    async with connectable.connect() as connection:
+        # Alembic 本体（context.run_migrations()の内部）が非同期（async/await）に対応しておらず、「同期の Connection を使って awaitなしで SQL を実行する」 作りになっているためです。
+        await connection.run_sync(do_run_migrations)
 
-    with connectable.connect() as connection:
-        context.configure(
-            render_as_batch=True, connection=connection, target_metadata=target_metadata
-        )
-
-        with context.begin_transaction():
-            context.run_migrations()
+    await connectable.dispose()
 
 
 if context.is_offline_mode():
     run_migrations_offline()
 else:
-    run_migrations_online()
+    # Alembic の場合：alembic コマンド自体は同期で動く CLIツールでイベントループを持っていないため、env.py:89 の asyncio.run(...)でその場限りのイベントループを立ち上げて非同期エンジン（sqlite+aiosqlite）を動かしています。
+    asyncio.run(run_async_migrations_online())

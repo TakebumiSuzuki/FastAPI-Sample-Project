@@ -1,9 +1,10 @@
-from collections.abc import Generator
+from collections.abc import AsyncGenerator
 from typing import Annotated, Any
 
 import jwt
 from fastapi import Depends, Query
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -22,16 +23,16 @@ class CommonQueryParams:
         self.limit = limit
 
 
-def get_db_session() -> Generator[Session]:
+async def get_db_session() -> AsyncGenerator[AsyncSession]:
     db_session = SessionLocal()
     try:
         yield db_session
     finally:
-        db_session.close()
+        await db_session.close()
 
 
-def get_user(
-    db_session: Annotated[Session, Depends(get_db_session)],
+async def get_user(
+    db_session: Annotated[AsyncSession, Depends(get_db_session)],
     credentials: Annotated[HTTPAuthorizationCredentials, Depends(HTTPBearer())],
 ) -> User:
     settings = get_settings()
@@ -48,7 +49,7 @@ def get_user(
         raise AuthenticationError()
 
     # select(User).where(User.id == id) を書いて scalar_one_or_none() するのと同じ
-    user = db_session.get(User, id)
+    user = await db_session.get(User, id)
     if not user or user.is_active == False:
         raise AuthenticationError()
     return user

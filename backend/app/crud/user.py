@@ -1,6 +1,6 @@
 import jwt
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import (
     create_access_token,
@@ -14,31 +14,31 @@ from app.models import RefreshToken, User
 from app.schemas import UserCreate
 
 
-def create_user(db_session: Session, user_in: UserCreate) -> User:
+async def create_user(db_session: AsyncSession, user_in: UserCreate) -> User:
     stmt = select(User).where(User.email == user_in.email)
-    existing_user = db_session.execute(stmt).scalar_one_or_none()
+    existing_user = (await db_session.execute(stmt)).scalar_one_or_none()
     if existing_user:
         raise UserAlreadyExists(user_email=existing_user.email)
 
     hashed_password = hash_password(user_in.password)
     new_user = User(email=user_in.email, hashed_password=hashed_password)
     db_session.add(new_user)
-    db_session.commit()
-    db_session.refresh(new_user)
+    await db_session.commit()
+    await db_session.refresh(new_user)
     return new_user
 
 
 dummy_hash = hash_password("dummy")
 
 
-def authenticate_user(
-    db_session: Session,
+async def authenticate_user(
+    db_session: AsyncSession,
     email: str,
     password: str,
 ) -> User | None:
 
     stmt = select(User).where(User.email == email)
-    user = db_session.execute(stmt).scalar_one_or_none()
+    user = (await db_session.execute(stmt)).scalar_one_or_none()
 
     if verify_password(
         plain_password=password,
@@ -49,29 +49,29 @@ def authenticate_user(
     return None
 
 
-def revoke_refresh_token(
-    db_session: Session,
+async def revoke_refresh_token(
+    db_session: AsyncSession,
     refresh_token: str,
 ) -> None:
     stmt = select(RefreshToken).where(RefreshToken.refresh_token == refresh_token)
-    token_record = db_session.execute(stmt).scalar_one_or_none()
+    token_record = (await db_session.execute(stmt)).scalar_one_or_none()
     if token_record is not None:
         token_record.active = False
-        db_session.commit()
+        await db_session.commit()
 
 
-def register_refresh_token(
-    db_session: Session,
+async def register_refresh_token(
+    db_session: AsyncSession,
     user_id: int,
     refresh_token: str,
 ) -> None:
     token = RefreshToken(user_id=user_id, refresh_token=refresh_token)
     db_session.add(token)
-    db_session.commit()
+    await db_session.commit()
 
 
-def reissue_tokens(
-    db_session: Session,
+async def reissue_tokens(
+    db_session: AsyncSession,
     refresh_token: str | None,
 ):
     if refresh_token is None:
@@ -83,7 +83,7 @@ def reissue_tokens(
         raise AuthenticationError()
 
     stmt = select(RefreshToken).where(RefreshToken.refresh_token == refresh_token)
-    stored_refresh_token = db_session.execute(stmt).scalar_one_or_none()
+    stored_refresh_token = (await db_session.execute(stmt)).scalar_one_or_none()
     # refresh tokenがそもそもホワイトリストに登録されていなかった場合、または、
     # 既に revoke 済みになっていた場合(=盗まれて既に対処済み)
     if stored_refresh_token is None or not stored_refresh_token.active:
@@ -99,7 +99,7 @@ def reissue_tokens(
     new_refresh_token = create_refresh_token(
         data={"sub": user_id_str, "email": email},
     )
-    register_refresh_token(
+    await register_refresh_token(
         db_session=db_session,
         user_id=int(user_id_str),
         refresh_token=new_refresh_token,
