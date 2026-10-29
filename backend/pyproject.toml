@@ -20,6 +20,7 @@ extend-select= ["UP","I","B"]
 dev = [
     "httpx2>=2.15.1",
     "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.1",
 ]
 
 
@@ -29,3 +30,4 @@ dev = [
 # 追加してくれるという挙動とは異なる。よって、以下の設定が必要。
 [tool.pytest.ini_options]
 pythonpath = ["."]
+asyncio_mode = "auto"

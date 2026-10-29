@@ -22,10 +22,17 @@
    - 各 CRUD 関数を `async def` 化し、`db_session` の型を `AsyncSession` に変更。
    - `execute()`・`commit()`・`refresh()`・`delete()` に `await` を追加。
    - `create_item` で遅延読み込みエラーを防ぐため `await db_session.refresh(new_item, ["category"])` を追加。
+6. **ルート層（エンドポイント関数）の非同期化 (`backend/app/routes/categories.py`, `items.py`, `users.py`)**
+   - 全エンドポイント関数を `async def` 化し、`db_session` の型注釈を `AsyncSession` に変更。
+   - 各 CRUD 関数の呼び出しと `categories.py` の `db_session.commit()` に `await` を追加。
+7. **`pytest-asyncio` の導入と `tests/conftest.py` の非同期化 (`backend/pyproject.toml`, `backend/tests/conftest.py`)**
+   - `uv add --dev pytest-asyncio` を実行し、`pyproject.toml` の `[tool.pytest.ini_options]` に `asyncio_mode = "auto"` を追加。
+   - `conftest.py` のエンジン・セッションを `create_async_engine("sqlite+aiosqlite:///:memory:")`・`async_sessionmaker(..., expire_on_commit=False)` に変更。
+   - `db_session` フィクスチャで `async with engine.begin() as conn:` と `await conn.run_sync(Base.metadata.create_all / drop_all)` を使う形に変更。
+   - `client` フィクスチャを `TestClient` から `httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://test")` に変更し、`seed_users`・`logged_in_context` も非同期化。
 
 ### 次回以降の残りタスク
-- **ステップ3**: ルート層の非同期化（`app/routes/categories.py`, `items.py`, `users.py`）
-- **ステップ4**: テストの非同期化（`tests/conftest.py` と各テストファイル）
+- **ステップ4（続き）**: 各テストファイル（`tests/test_items.py`, `test_categories.py`, `test_users.py`）の非同期化とテスト実行確認
 
 ---
 
@@ -101,3 +108,30 @@
   - 「本体のカラムと一緒に」ではなく、**リストに書いた属性（この場合は `category`）だけ**を DB から取得する（本体の他のカラムはすでにメモリ上にある値がそのまま残る）。
   - もし `refresh()` の第2引数だけで全カラム＋リレーションを取り直そうとすると全属性名をリストに列挙する必要があるため、実務で両方まとめて取り直したい場合は `select(...).options(joinedload(...))` でクエリを発行し直す。
   - なお、`update_item` でも「確実に `category` を読み込む」という安全のために `await db_session.refresh(db_item, ["category"])` と書いても問題なく動作する。
+
+### Q10. `pytest-asyncio` を入れた場合、`from fastapi.testclient import TestClient` はもう不要なのか？ また、イベントループと `uvicorn` の関係はどうなっているのか？
+**A.**
+- `from fastapi.testclient import TestClient` は**もう不要（削除してOK）**で、`pytest-asyncio` を入れたことで**メインスレッドのイベントループ上でテストが動くようになる**。
+
+```
+【これまで：素の pytest（同期）＋ TestClient】
+ pytest（イベントループなし）
+   └─ TestClient.get() ──[裏で別スレッド＆別ループを毎回起動]──> FastAPI (app)
+
+【これから：pytest-asyncio ＋ httpx.AsyncClient】
+ pytest-asyncio（メインスレッドでイベントループを回す）
+   ├─ await db_session.execute()  （同じループ上で動く）
+   └─ await AsyncClient.get()     （同じループ上でそのまま FastAPI (app) を呼ぶ）
+```
+
+1. **`from fastapi.testclient import TestClient` は必要か？**
+   不要。`TestClient` は「イベントループを持たない同期の `pytest` から、無理やり FastAPI を呼ぶための変換アダプタ」だったため、テスト自体が非同期になった時点でお役御免になる。
+2. **イベントループ上で `pytest` がメインスレッドで動くことになるのか？**
+   その通り。`pytest-asyncio` を入れたことでテスト関数自体が最初からメインスレッドのイベントループ上で動くようになったため、わざわざ別ループを立ち上げる `TestClient` ではなく、今動いているイベントループにそのまま乗っかる `httpx.AsyncClient` を使う。
+3. **テスト時に `uvicorn` は使っているのか？**
+   使っていない。テスト実行時は Web サーバー（`uvicorn`）を立ち上げず、ネットワーク通信も発生しない。`TestClient` や `AsyncClient`（＋ `ASGITransport(app=app)`）が、`uvicorn` の代わりに Python のメモリ上で直接 `app` オブジェクトを呼び出し、エンドポイントの `def` や `async def` 関数を実行している。
+
+### Q11. `conftest.py` の `db_session` フィクスチャで、`yield session` を `async with engine.begin() as conn:` の中に入れてはいけないのはなぜか？
+**A.**
+- `engine.begin()` はブロックを抜けるまでトランザクションを確定（コミット）せず、接続を掴みっぱなしにする。
+- そのため、`create_all` と `drop_all` の直前だけで個別に `async with engine.begin() as conn:` を開いて閉じ、そのブロックの外で `session = TestingAsyncSessionLocal()` と `yield session` を実行する。

@@ -1,11 +1,11 @@
 import jwt
 import pytest
-from fastapi.testclient import TestClient
+from httpx import AsyncClient
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
-from app.core.security import verify_password, decode_token
+from app.core.security import decode_token, verify_password
 from app.models import RefreshToken, User
 
 
@@ -17,10 +17,13 @@ from app.models import RefreshToken, User
         ("test_user2@gmail.com", "Pa1!" + "a" * 251),
     ],
 )
-def test_register_user(
-    db_session: Session, client: TestClient, email: str, password: str
+async def test_register_user(
+    db_session: AsyncSession,
+    client: AsyncClient,
+    email: str,
+    password: str,
 ):
-    response = client.post(
+    response = await client.post(
         "/users",
         json={"email": email, "password": password},
     )
@@ -32,20 +35,20 @@ def test_register_user(
     assert data["email"] == email
 
     stmt = select(User).where(User.email == email)
-    user = db_session.execute(stmt).scalar_one_or_none()
+    user = (await db_session.execute(stmt)).scalar_one_or_none()
     assert user is not None
     assert user.email == email
     assert verify_password(password, user.hashed_password)
 
 
-def test_register_duplicate_email(client: TestClient):
-    response = client.post(
+async def test_register_duplicate_email(client: AsyncClient):
+    response = await client.post(
         "/users",
         json={"email": "test_user@gmail.com", "password": "Password1234!"},
     )
     assert response.status_code == 201
 
-    response2 = client.post(
+    response2 = await client.post(
         "/users",
         json={"email": "test_user@gmail.com", "password": "Password4321!"},
     )
@@ -65,8 +68,8 @@ def test_register_duplicate_email(client: TestClient):
         "Test1!a",
     ],
 )
-def test_register_invalid_password(client: TestClient, password: str):
-    response = client.post(
+async def test_register_invalid_password(client: AsyncClient, password: str):
+    response = await client.post(
         "/users", json={"email": "test_user@gmail.com", "password": password}
     )
     assert response.status_code == 422
@@ -75,12 +78,12 @@ def test_register_invalid_password(client: TestClient, password: str):
     assert "password" in data["error"]["details"]
 
 
-def test_login_user(
-    db_session: Session,
-    client: TestClient,
+async def test_login_user(
+    db_session: AsyncSession,
+    client: AsyncClient,
     seed_users,
 ):
-    response = client.post(
+    response = await client.post(
         "/users/login",
         json={
             "email": "test_user_1@gmail.com",
@@ -116,7 +119,7 @@ def test_login_user(
         RefreshToken.refresh_token == refresh_token,
         RefreshToken.user_id == int(refresh_payload["sub"]),
     )
-    saved_refresh_token = db_session.execute(stmt).scalar_one()
+    saved_refresh_token = (await db_session.execute(stmt)).scalar_one()
     assert saved_refresh_token is not None
     assert saved_refresh_token.refresh_token == refresh_token
 
@@ -128,22 +131,24 @@ def test_login_user(
         ("test_user_3@gmail.com", "Test_password_2!"),
     ],
 )
-def test_user_login_invalid_email_or_password(
-    client: TestClient,
+async def test_user_login_invalid_email_or_password(
+    client: AsyncClient,
     seed_users,
     email: str,
     password: str,
 ):
-    response = client.post("/users/login", json={"email": email, "password": password})
+    response = await client.post(
+        "/users/login", json={"email": email, "password": password}
+    )
     assert response.status_code == 401
     assert response.json()["error"]["message"] == "Incorrect email or password"
 
 
-def test_user_login_invalid_email(
-    client: TestClient,
+async def test_user_login_invalid_email(
+    client: AsyncClient,
     seed_users,
 ):
-    response = client.post(
+    response = await client.post(
         "/users/login",
         json={
             "email": "test_email",
@@ -155,11 +160,11 @@ def test_user_login_invalid_email(
     assert data["error"]["code"] == "validation_error"
 
 
-def test_user_login_invalid_payload(
-    client: TestClient,
+async def test_user_login_invalid_payload(
+    client: AsyncClient,
     # seed_users, これは必要ない。なぜならDB照合前に弾かれるから。
 ):
-    response = client.post(
+    response = await client.post(
         "/users/login",
         json={
             "email": "test_user_1@gmail.com",
@@ -171,7 +176,7 @@ def test_user_login_invalid_payload(
     assert response.json()["error"]["code"] == "validation_error"
 
 
-def test_user_logout(db_session, logged_in_context):
+async def test_user_logout(db_session, logged_in_context):
     logged_in_client = logged_in_context["logged_in_client"]
     access_token = logged_in_context["access_token"]
     refresh_token = logged_in_context["refresh_token"]
@@ -184,24 +189,24 @@ def test_user_logout(db_session, logged_in_context):
         RefreshToken.user_id == user_id,
         RefreshToken.refresh_token == refresh_token,
     )
-    result1 = db_session.execute(stmt).scalar_one_or_none()
+    result1 = (await db_session.execute(stmt)).scalar_one_or_none()
     assert result1 is not None
     assert result1.active == True
     assert result1.refresh_token == refresh_token
 
-    response = logged_in_client.post(
+    response = await logged_in_client.post(
         "/users/logout", json={}, headers={"Authorization": f"Bearer {access_token}"}
     )
     assert response.status_code == 204
 
-    result2 = db_session.execute(stmt).scalar_one_or_none()
+    result2 = (await db_session.execute(stmt)).scalar_one_or_none()
     assert result2 is not None
     assert result2.active == False
     assert "refresh_token" not in logged_in_client.cookies
 
 
-def test_user_logout_by_unauthorized_user(client):
-    response = client.post(
+async def test_user_logout_by_unauthorized_user(client):
+    response = await client.post(
         "/users/logout",
         json={},
         # もし headers を渡さない場合、get_user 内のトークン検証に到達する前に FastAPIの標準機能で弾かれ、code が "invalid_credentials" ではなく"http_error"（※ヘッダーが存在しないという共通エラー）になります。
@@ -212,19 +217,19 @@ def test_user_logout_by_unauthorized_user(client):
     assert data["error"]["code"] == "invalid_credentials"
 
 
-def test_refresh_tokens(logged_in_context):
+async def test_refresh_tokens(logged_in_context):
     logged_in_client = logged_in_context["logged_in_client"]
     access_token = logged_in_context["access_token"]
     refresh_token = logged_in_context["refresh_token"]
 
     # access tokenをヘッダーに入れない
-    response = logged_in_client.post("/users/refresh", json={})
+    response = await logged_in_client.post("/users/refresh", json={})
     assert response.status_code == 200
     assert response.json()["access_token"] != access_token
     assert response.cookies["refresh_token"] != refresh_token
 
 
-def test_refresh_tokens_with_revoked_refresh_token(logged_in_context):
+async def test_refresh_tokens_with_revoked_refresh_token(logged_in_context):
     logged_in_client = logged_in_context["logged_in_client"]
     access_token = logged_in_context["access_token"]
     refresh_token = logged_in_context["refresh_token"]
@@ -237,7 +242,7 @@ def test_refresh_tokens_with_revoked_refresh_token(logged_in_context):
     # という害しかありません。
     # トークン失効の標準仕様（RFC 7009）でも、対象のトークンが存在しない、または
     # 無効な場合はエラーにせず成功（200 / 204）を返すのがルールになっている。
-    response1 = logged_in_client.post(
+    response1 = await logged_in_client.post(
         "/users/logout",
         json={},
         headers={"Authorization": f"Bearer {access_token}"},
@@ -245,12 +250,12 @@ def test_refresh_tokens_with_revoked_refresh_token(logged_in_context):
     assert response1.status_code == 204
 
     logged_in_client.cookies.set("refresh_token", refresh_token)
-    response2 = logged_in_client.post("/users/refresh")
+    response2 = await logged_in_client.post("/users/refresh")
     assert response2.status_code == 401
     assert response2.json()["error"]["code"] == "invalid_credentials"
 
 
-def test_refresh_tokens_with_expired_refresh_token(logged_in_context):
+async def test_refresh_tokens_with_expired_refresh_token(logged_in_context):
     logged_in_client = logged_in_context["logged_in_client"]
     refresh_token = logged_in_context["refresh_token"]
     settings = get_settings()
@@ -262,13 +267,13 @@ def test_refresh_tokens_with_expired_refresh_token(logged_in_context):
     )
 
     logged_in_client.cookies.set("refresh_token", expired_refresh_token)
-    response = logged_in_client.post("/users/refresh", json={})
+    response = await logged_in_client.post("/users/refresh", json={})
     assert response.status_code == 401
     assert response.json()["error"]["code"] == "invalid_credentials"
 
 
-def test_refresh_tokens_with_invalid_refresh_token(client: TestClient):
+async def test_refresh_tokens_with_invalid_refresh_token(client: AsyncClient):
     client.cookies.set("refresh_token", "invalid text")
-    response = client.post("/users/refresh", json={})
+    response = await client.post("/users/refresh", json={})
     assert response.status_code == 401
     assert response.json()["error"]["code"] == "invalid_credentials"

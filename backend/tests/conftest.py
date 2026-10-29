@@ -1,9 +1,8 @@
-from collections.abc import Generator
+from collections.abc import AsyncGenerator
 
 import pytest
-from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
+from httpx import ASGITransport, AsyncClient
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
 
 from app.crud.user import create_user
@@ -12,40 +11,47 @@ from app.models import Base
 from app.schemas import UserCreate
 from main import app
 
-engine = create_engine(
-    "sqlite:///:memory:",
+engine = create_async_engine(
+    "sqlite+aiosqlite:///:memory:",
     connect_args={"check_same_thread": False},
     poolclass=StaticPool,
 )
-TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+TestingAsyncSessionLocal = async_sessionmaker(
+    autoflush=False, bind=engine, expire_on_commit=False
+)
 
 
 @pytest.fixture
-def db_session() -> Generator[Session]:
-    Base.metadata.create_all(bind=engine)
-    session = TestingSessionLocal()
+async def db_session() -> AsyncGenerator[AsyncSession]:
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    session = TestingAsyncSessionLocal()
     try:
         yield session
     finally:
-        session.close()
-        Base.metadata.drop_all(bind=engine)
+        await session.close()
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.drop_all)
 
 
 @pytest.fixture
-def client(db_session: Session) -> Generator[TestClient]:
-    def override_get_db():
+async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient]:
+    async def override_get_db():
         try:
             yield db_session
         finally:
             pass
 
     app.dependency_overrides[get_db_session] = override_get_db
-    yield TestClient(app)
+    async with AsyncClient(
+        transport=ASGITransport(app=app), base_url="http://test"
+    ) as ac:
+        yield ac
     app.dependency_overrides.clear()
 
 
 @pytest.fixture
-def seed_users(db_session: Session):
+async def seed_users(db_session: AsyncSession):
     users_data = [
         {"email": "test_user_1@gmail.com", "password": "Test_password_1!"},
         {"email": "test_user_2@gmail.com", "password": "Test_password_2!"},
@@ -53,12 +59,12 @@ def seed_users(db_session: Session):
 
     for user_data in users_data:
         user_in = UserCreate.model_validate(user_data)
-        create_user(db_session=db_session, user_in=user_in)
+        await create_user(db_session=db_session, user_in=user_in)
 
 
 @pytest.fixture()
-def logged_in_context(client, seed_users):
-    response = client.post(
+async def logged_in_context(client, seed_users):
+    response = await client.post(
         "/users/login",
         json={
             "email": "test_user_1@gmail.com",

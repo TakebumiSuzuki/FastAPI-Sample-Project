@@ -2,7 +2,7 @@ from typing import Annotated
 
 from fastapi import Body, Cookie, Depends, HTTPException, Response
 from fastapi.routing import APIRouter
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import create_access_token, create_refresh_token
 from app.crud import user as crud_user
@@ -14,11 +14,11 @@ router = APIRouter(prefix="/users", tags=["users"])
 
 
 @router.post("", response_model=UserPublic, status_code=201)
-def register_user(
-    db_session: Annotated[Session, Depends(get_db_session)],
+async def register_user(
+    db_session: Annotated[AsyncSession, Depends(get_db_session)],
     user_in: Annotated[UserCreate, Body()],
 ):
-    new_user = crud_user.create_user(
+    new_user = await crud_user.create_user(
         db_session=db_session,
         user_in=user_in,
     )
@@ -26,14 +26,14 @@ def register_user(
 
 
 @router.post("/login", response_model=Token)
-def login_user(
-    db_session: Annotated[Session, Depends(get_db_session)],
+async def login_user(
+    db_session: Annotated[AsyncSession, Depends(get_db_session)],
     login_in: Annotated[UserLogin, Body()],
     response: Response,
 ) -> dict:
     # 以下は DB に Login情報を保存する処理ではなく「メールアドレスで検索してパスワードを
     # 照合する処理なので、引数を個別に渡す形がプロジェクト全体と一貫しています。
-    user = crud_user.authenticate_user(
+    user = await crud_user.authenticate_user(
         db_session=db_session,
         email=login_in.email,
         password=login_in.password,
@@ -50,7 +50,7 @@ def login_user(
     refresh_token = create_refresh_token(
         data={"sub": str(user.id), "email": user.email},
     )
-    crud_user.register_refresh_token(
+    await crud_user.register_refresh_token(
         db_session=db_session,
         user_id=user.id,
         refresh_token=refresh_token,
@@ -71,8 +71,8 @@ def login_user(
 # 全端末ログアウト（user_id指定での一括無効化）は、パスワード変更時や
 # すべての端末からログアウトするという専用ボタンとして別枠で用意するのが定石。
 @router.post("/logout", status_code=204)
-def logout_user(
-    db_session: Annotated[Session, Depends(get_db_session)],
+async def logout_user(
+    db_session: Annotated[AsyncSession, Depends(get_db_session)],
     response: Response,
     user: Annotated[User, Depends(get_user)],
     refresh_token: Annotated[str | None, Cookie()] = None,
@@ -81,21 +81,21 @@ def logout_user(
     # Cookie を送り、ブラウザに上書き→即削除させる。path が違うと別物扱いで消えない。
     response.delete_cookie("refresh_token", path="/users")
     if refresh_token:
-        crud_user.revoke_refresh_token(
+        await crud_user.revoke_refresh_token(
             db_session=db_session, refresh_token=refresh_token
         )
 
 
 # refreshでは、POSTメソッドで、ペイロード空、status_code=200 にするのが通常。
 @router.post("/refresh", status_code=200, response_model=Token)
-def refresh_tokens(
-    db_session: Annotated[Session, Depends(get_db_session)],
+async def refresh_tokens(
+    db_session: Annotated[AsyncSession, Depends(get_db_session)],
     response: Response,
     # | None がないと、422のエラーとして処理されるが、401のエラーとして
     # 処理したいので、一旦 Noneとして関数を実行させるようにしている。
     refresh_token: Annotated[str | None, Cookie()] = None,
 ) -> dict[str, str]:
-    new_access_token, new_refresh_token = crud_user.reissue_tokens(
+    new_access_token, new_refresh_token = await crud_user.reissue_tokens(
         db_session=db_session,
         refresh_token=refresh_token,
     )
