@@ -6,9 +6,9 @@
 
 ### 1. User モデルへの `is_active` 追加とマイグレーション
 - `backend/app/models/user.py`:
-  - `is_active: Mapped[bool] = mapped_column(Boolean(), default=True, server_default="1")` を追加。
+  - `is_active: Mapped[bool] = mapped_column(Boolean(), default=True, server_default="1")` を追加。 (`Postgres` では、`server_default="true"`　とかく)
   - アカウント停止や論理削除の基盤を用意。
-  - 既存データがある状態でのマイグレーション（NOT NULL 制約）を考慮し、DB 側のデフォルト値（`server_default="1"`）を指定。
+  - 既存データがある状態でのマイグレーション（NOT NULL 制約）を考慮し、DB 側のデフォルト値（`server_default="1"`）を指定。最初から is_active 列があり、そのモデル経由で SQLAlchemy が INSERT する前提なら、server_default は必須ではない。
 - Alembic によるマイグレーション実行：
   - `uv run alembic revision --autogenerate -m "add is_active column to User table"`
   - `uv run alembic upgrade head`
@@ -32,7 +32,6 @@
 - **未認証ガードテストの追加**:
   - `test_create_category_unauthorized(client)`:
     - トークンなしで POST した際、FastAPI の `HTTPBearer` により手前で弾かれ、`status_code == 401` かつ `code == "http_error"`（`message == "Not authenticated"`）になることを検証。
-- **実行結果**: 全31件のテストが全件 PASS。
 
 ---
 
@@ -85,10 +84,75 @@ pytest のフィクスチャは実行時に動的注入されるため、コー�
 1. **書かない（割り切り）**: 期限切れ判定は PyJWT の責務なので、アプリ側は「不正トークンで 401 になる」ことの確認で十分とする。
 2. **時刻をモックする**: `freezegun` などのライブラリを使い、サーバーの時計を仮想的に11分進めることで、自然に発行されたトークンが期限切れになる様子をそのまま検証する。
 
-### Q11. 「自分のデータしか触れない認可」はどう実装する？ Dependency に入れることはある？
-**A.** 関数内でのチェックと、Dependency への切り出しの両方が使われる。
-- **関数内でチェック**: 直感的でわかりやすい。
-- **Dependency に切り出し**: `item_id: Annotated[int, Path()]` と `current_user: Annotated[User, Depends(get_user)]` を受け取る依存関数（例: `get_owned_item`）を作成する。Update や Delete など複数ルートで発生する「404 チェック」と「本人のデータ確認（403）」を共通化できるため、FastAPI では定石の手法。
+### Q11. ログイン確認だけで、他人のデータの更新・削除を防げる？ 本人のデータかどうかは、どこで確認する？
+
+**A.** ログイン確認だけでは防げない。「操作しているのは誰か」に加えて、「その人が操作対象のデータの所有者か」を確認する必要がある。
+
+たとえば、「自分が作成した商品だけを削除できる」という仕様を考える。
+
+- A さんのユーザー ID は `1`。A さんが作成した商品の ID は `10`。
+- B さんのユーザー ID は `2`。
+- B さんが自分の正しいトークンで `DELETE /items/10` を送る。
+
+このとき、`get_user` は B さんをログイン済みユーザーとして取得できる。しかし、商品 `10` は A さんのものなので、削除は許可してはいけない。
+
+- **認証**: トークンを確認し、「リクエストを送っているのは B さん」と特定する。
+- **認可**: 商品の所有者を確認し、「B さんにはこの商品を削除する権限がない」と判断する。
+
+所有者を判断するには、商品側にも「誰のデータか」を保存しておく必要がある。以下は、`Item` に所有者のユーザー ID を保存する `owner_id` 列を追加した場合の説明例。現在の `Item` にはこの列はない。商品作成時に、`get_user` で取得したユーザーの `id` を `owner_id` に保存する想定とする。
+
+操作時には、DB から取得した商品の `owner_id` と、`get_user` で取得したユーザーの `id` を比較する。上の例では `1 != 2` なので拒否する。URL の `item_id` は商品の ID であり、ユーザーの ID とは別のもの。
+
+この確認を**ルート関数内に書く**なら、「商品を取得する → なければ 404 → 所有者が違えば 403 → 問題なければ削除する」という順に処理する。
+
+更新と削除の両方で同じ確認が必要なら、**確認処理を Dependency（ルートの処理に必要な値を用意する関数）にまとめる**こともできる。たとえば、次の `get_owned_item` は、存在と所有者を確認した商品を返す。
+
+```python
+from typing import Annotated
+
+from fastapi import Depends, HTTPException, Path
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.crud import item as crud
+from app.deps import get_db_session, get_user
+from app.exceptions import ItemNotFound
+from app.models.item import Item
+from app.models.user import User
+
+
+async def get_owned_item(
+    item_id: Annotated[int, Path()],
+    current_user: Annotated[User, Depends(get_user)],
+    db_session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> Item:
+    item = await crud.get_item_from_id(db_session=db_session, item_id=item_id)
+    if item is None:
+        raise ItemNotFound(item_id)  # 404: 商品が存在しない
+    if item.owner_id != current_user.id:
+        raise HTTPException(status_code=403, detail="この商品を操作する権限がありません")
+    return item
+```
+
+それぞれの引数の値は、FastAPI が用意する。
+
+- `item_id`: URL の `/items/{item_id}` から取得する。`/items/10` なら `10`。
+- `current_user`: `get_user` を実行して取得する、リクエストを送ったユーザー。
+- `db_session`: `get_db_session` から取得する、DB にアクセスするためのセッション。
+
+削除ルートでは、次のように `Depends(get_owned_item)` を指定する。
+
+```python
+@router.delete("/{item_id}", status_code=204)
+async def delete_item(
+    item: Annotated[Item, Depends(get_owned_item)],
+    db_session: Annotated[AsyncSession, Depends(get_db_session)],
+) -> None:
+    await crud.delete_item(db_session=db_session, db_item=item)
+```
+
+FastAPI はルート関数の本体を実行する前に `get_owned_item` を実行し、その戻り値を `item` に渡す。途中で 404 や 403 の例外が発生すれば、ルート関数の本体は実行されず、削除も行われない。Dependency の中で `Depends(get_user)` を使うように、依存関数から別の依存関数を利用することもできる。[FastAPI 公式: Sub-dependencies](https://fastapi.tiangolo.com/tutorial/dependencies/sub-dependencies/)
+
+更新ルートにも `item: Annotated[Item, Depends(get_owned_item)]` を指定すれば、同じ確認処理を使える。ルート関数内に書く場合も Dependency にまとめる場合も、所有者を比較する処理自体は同じ。Dependency にまとめる目的は、複数のルートでその処理を共通化すること。
 
 ### Q12. ユーザー関連のエンドポイント設計と `/me` の使い分けは？
 **A.**

@@ -7,11 +7,11 @@
 ```text
 [クライアントからのリクエスト]
   │
-  ▼ ① OSのソケットキュー（backlog=2048。イベントループが忙しければここで待つ）
+  ▼ ① OSのソケットキュー（backlog=2048。イベントループが忙しければここで待つ、カーネルが管理）
 [MainThread: uvicorn が asyncio イベントループ (_run_once) を回す]
   │  受信したリクエストごとに loop.create_task() で1タスクを作成
   ▼ ② イベントループ内の実行待ちキュー (_ready) に積む
-[Task 実行: await app(scope, receive, send) で FastAPI 本体を呼ぶ]
+[Task 実行: await app(scope, receive, send) で FastAPI 本体を呼ぶ。この部分がまさに、 ASGIという、WebサーバーとPythonアプリの間の呼び出しルールを表している]
   │
   ├── (A) エンドポイント / Depends が `async def` の場合
   │        └── 別スレッドは作らず、同じ MainThread 上でそのまま直進して await 実行

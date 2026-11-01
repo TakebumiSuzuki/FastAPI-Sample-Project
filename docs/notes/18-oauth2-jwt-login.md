@@ -7,8 +7,8 @@
 ### 1. ライブラリ選定と設定追加
 - `pyjwt` を `uv add` でインストール（現代の FastAPI 公式推奨）。コード内では `import jwt` で使用。
 - `backend/app/core/config.py` と `.env` に JWT 署名および有効期限の設定値を追加：
-  - `secret_key: str`: 署名用の秘密鍵（漏洩厳禁のランダム文字列）
-  - `algorithm: str = "HS256"`: 共通鍵暗号方式の定番アルゴリズム
+  - `secret_key: str`: 署名用の秘密鍵（漏洩厳禁のランダム文字列）。`HS256` を使うなら32バイト（半角英数字で32文字）以上、上限なしという決まりがある。この文字数以外だと警告が出る。
+  - `algorithm: str = "HS256"`: 共通鍵暗号方式の定番アルゴリズム。HMAC（秘密鍵付きハッシュ：鍵がないと同じ値を計算できない仕組み）＋ SHA-256（256ビットのハッシュ関数）の頭文字からの略。
   - `access_token_expire_minutes: int = 10`: アクセストークンの有効期間（短め）
   - `refresh_token_expire_days: int = 7`: リフレッシュトークンの有効期間（長め）
 
@@ -30,7 +30,7 @@
   - フロントエンドとの通信を JSON に統一し、自然な項目名（`email`）で受け取るためのリクエストスキーマ。
 - `Token(BaseModel)`:
   - `access_token: str`: レスポンスボディで返す JWT 文字列
-  - `token_type: str = "bearer"`: トークン種別（既定値 `"bearer"`）
+  - `token_type: str = "bearer"`: トークン種別（既定値 `"bearer"`）。OAuth 2.0（認証の標準規格・RFC 6749）で「トークン発行時は `token_type` も必ず返すこと」と決められているため入れている項目。シンプルなアプリでは必要ないが、`Swagger UI` で「Authorize」ボタンからログインを試したい場合は必要。
 
 ### 4. ユーザー認証 CRUD 関数 (`backend/app/crud/user.py`)
 - `authenticate_user(db_session, email, password) -> User | None`:
@@ -61,7 +61,19 @@
   - `RefreshToken.refresh_token == refresh_token` で検索し、`scalar_one_or_none()` で取得したレコード（存在する場合）を `active = False` に更新。
 - `@router.post("/logout", status_code=204)`:
   - 状態を変更する操作のため `POST` で定義。
-  - `response.delete_cookie("refresh_token")` で Cookie を削除し、Cookie に `refresh_token` があれば `revoke_refresh_token` で DB 側も無効化する（Cookie の有無にかかわらず `204` を返す冪等な設計）。
+  - `response.delete_cookie("refresh_token", path="/users")` で Cookie を削除し、Cookie に `refresh_token` があれば `revoke_refresh_token` で DB 側も無効化する（Cookie の有無にかかわらず `204` を返す冪等な設計）。
+
+### 8. トークン再発行（リフレッシュ）エンドポイント (`POST /users/refresh`)
+- **そもそも何をする機能か**：短い有効期限（10分）が切れた `access_token` の代わりに、ブラウザの Cookie に入っている `refresh_token`（7日間有効）を送ってもらい、**新しい `access_token` と新しい `refresh_token` をセットで再発行する**機能（古い `refresh_token` はその場で使い捨てにする＝トークンローテーション）。
+- `decode_token(token, expected_type)` (`backend/app/core/security.py`):
+  - DB を使わない純粋な JWT 検証（署名・有効期限・`payload["type"] == expected_type` の確認）を行う共通関数。
+- `reissue_tokens(db_session, refresh_token)` (`backend/app/crud/user.py`):
+  1. Cookie から受け取った旧 `refresh_token` を `decode_token(expected_type="refresh")` で検証（失敗時は `401`）。
+  2. DB の `RefreshToken` テーブルを検索し、**レコードが存在しない、またはすでに `active == False`（使用済み・ログアウト済み）なら `AuthenticationError`（`401`）で拒否**。
+  3. 有効だった場合は、その旧 `refresh_token` を `active = False` に更新して無効化（1回限りの使い捨てにする）。
+  4. 新しい `access_token` と `refresh_token` を生成し、新しい `refresh_token` を `register_refresh_token()` で DB に保存して返却。
+- `@router.post("/refresh", status_code=200, response_model=Token)` (`backend/app/routes/users.py`):
+  - Cookie から `refresh_token` を受け取り、`reissue_tokens` を呼んで、新しい `refresh_token` で Cookie を上書きしつつ新しい `access_token` を JSON で返す。
 
 ---
 
@@ -69,7 +81,7 @@
 
 ### Q1. なぜ `OAuth2PasswordRequestForm` ではなく通常の Pydantic スキーマ（JSON）を使うのか？
 **A.** フロントエンドの実装負担を減らし、通信形式を JSON に統一するため。
-OAuth2 の仕様に沿った `OAuth2PasswordRequestForm` はフォーム形式（`x-www-form-urlencoded`）かつ項目名が `username` 固定になるが、自作 SPA などの Web 開発では JSON 形式で `email` を受け取る方が自然で扱いやすい。FastAPI の `/docs`（Swagger UI）の鍵ボタン連携を優先しない限り、Pydantic スキーマを使う方が実用的。
+OAuth2 の仕様に沿った `OAuth2PasswordRequestForm` (`Annotated[OAuth2PasswordRequestForm, Depends()]` のように `Depends()`（依存性注入）とセットで使う) はフォーム形式（`x-www-form-urlencoded`）かつ項目名が `username` 固定になるが、自作 SPA などの Web 開発では JSON 形式で `email` を受け取る方が自然で扱いやすい。FastAPI の `/docs`（Swagger UI）の鍵ボタン連携を優先しない限り、Pydantic スキーマを使う方が実用的。
 
 ### Q2. `authenticate_user` の引数にスキーマ（`login_in`）ではなく `email, password` を個別に渡す理由は？
 **A.** 処理の役割が「DB へのデータ保存」ではなく「検索・照合の条件」だから。
@@ -182,15 +194,24 @@ FastAPI の内部ラッパー関数が一時的な `Response` インスタンス
 ### Q20. `scalar_one()` / `scalar_one_or_none()` / `scalars()` の使い分けは？
 **A.** `scalar_one()` は「ちょうど1件」が前提で、0件なら `NoResultFound`、2件以上なら `MultipleResultsFound` を投げる（未処理なら 500）。0件か1件の検索（`jti` で一意化されたトークンの検索など）は `scalar_one_or_none()` を使い、複数件ありうる検索は `scalars()` で受ける。
 
-### Q21. リフレッシュ時の `active` 検証を `revoke_refresh_token` に入れない理由は？
-**A.** 目的が逆だから。ログアウトは「既に無効・不在でも 204 で終わる（冪等）」べきで、リフレッシュは「無効・不在なら 401 で拒否」すべき。`revoke_refresh_token` に 401 を入れるとログアウトが壊れるため、検証はリフレッシュ側の関数で行う。
+### Q21. ログアウト処理とリフレッシュ処理は、どちらも「DB の `refresh_token` を `active=False` にする」のに、なぜ別の関数に分けているのか？
+**A.**
+- **そもそも論（共通点）**：
+  - **ログアウト（`/users/logout`）**：「今使っている `refresh_token` を無効（`active=False`）にする」
+  - **リフレッシュ（`/users/refresh`）**：「使い終わった古い `refresh_token` を無効（`active=False`）にして、新しいトークンを発行する」
+  - どちらも「DB から `refresh_token` を探して `active=False` に書き換える」という同じ作業が含まれている。
+- **なぜ1つの関数（`revoke_refresh_token`）にまとめないのか**：
+  - もし送られてきた `refresh_token` が **「DB に存在しない」または「すでに `active=False`（無効化済み）だったとき」** にどう扱いたいかが正反対だから。
+  - **ログアウト時（`revoke_refresh_token`）**：目的は「ログアウト状態にすること」なので、すでに無効化済みでもエラーにはせず、そのまま `204`（成功）で終わらせたい。
+  - **リフレッシュ時（`reissue_tokens`）**：目的は「有効なトークンと引き換えに新しいトークンを渡すこと」なので、すでに無効化済みなら不正利用として **`401` エラー（`AuthenticationError`）で弾きたい**。
+  - もし `revoke_refresh_token` の中に「無効なら `401` エラーにする」というチェックを入れて共通化してしまうと、ログアウトしたときに `401` エラーが出るようになってしまうため、別々に書いている。
 
 ### Q22. JWT の `sub` と重複するのに `RefreshToken.user_id` カラムを持つ理由は？
 **A.** 「パスワード変更時に全端末ログアウト」「ログイン中端末の一覧」など、ユーザー単位の操作を `WHERE user_id = ?` で行うため。カラムがないと全トークンをデコードして `sub` を調べるしかない。トークン1件の特定には不要なので、今の機能だけ見れば冗長。
 
 ### Q23. トークン処理を `core/security.py` と `crud` にどう分ける？
 **A.**
-- **DB を使わない JWT 検証（decode + `type` チェック）→ `security.py`**：`decode_token(token, expected_type)` にまとめ、`deps.py` の `get_user` と `reissue_tokens` の重複をなくす。
+- **DB を使わない JWT 検証（decode + `type` チェック）→ `security.py`**
 - **DB 操作（検索・無効化・登録）→ `crud`**。
 - **core 層は HTTP の例外を投げない**：`type` 不一致も `jwt.InvalidTokenError` で投げ、呼び出し側で `AuthenticationError`（401）に変換する。core 層が HTTP（FastAPI）に依存しない。
 - **命名**：古いリフレッシュトークンを無効化して新しいものを発行することを「トークンローテーション」と呼ぶ。`refresh_tokens` は名詞（モデル名・テーブル名）とも読めて紛らわしい。
@@ -204,9 +225,14 @@ FastAPI の内部ラッパー関数が一時的な `Response` インスタンス
 - **`raise ... from None`**：`except` 内で別の例外を投げるとき、元の例外がエラー表示に連鎖して出るのを止める（ruff の B904 が指摘する）。
 - **`return a, b` と `return (a, b)` は同じ**：タプルを作るのは括弧ではなくカンマ。
 
-### Q26. Cookie の `path` と `delete_cookie` の仕組みは？
+### Q26. Cookie の `path="/users"` とは何か？ また `delete_cookie` でも `path="/users"` を指定する理由は？
 **A.**
-- **`path` は1つだけ**：カンマ区切りで複数指定はできない（カンマも path の文字列の一部になる）。
-- **前方一致で送られる**：`path="/users"` なら `/users`・`/users/refresh`・`/users/logout` には送られ、`/items` や `/usersXYZ` には送られない（直後が `/` のときだけ一致）。refresh と logout の両方で Cookie を読むので `"/users"` にしている。
-- **set と delete で path をそろえる**：ブラウザは Cookie を「名前 + ドメイン + path」で区別する。`delete_cookie` の既定値は `path="/"` なので、`/users` で保存したら削除時も `path="/users"` が必要。
-- **`delete_cookie` の正体**：サーバーはブラウザの Cookie を直接消せない。同じ名前・path で `Max-Age=0` の `Set-Cookie` を送ると、ブラウザが上書き → 期限切れ → 即削除する（RFC 6265 5.3 節）。
+1. **そもそも Cookie の `path` とは？（どの URL への通信時だけ Cookie を送るかの制限）**
+   - 何も指定しない場合（既定値 `path="/"`）、ブラウザは `/items` など**すべての API 通信に毎回 `refresh_token` の Cookie を添付して送ってしまう**。
+   - `path="/users"` を指定すると、ブラウザに対して**「URL が `/users` で始まる通信（`/users/refresh` や `/users/logout` など）のときだけこの Cookie を送り、`/items` など無関係な URL には送るな」**と制限できる。
+2. **なぜ `/users/refresh` と `/users/logout` の2つを直接書かずに `path="/users"` にしているのか？**
+   - Cookie の仕様上、`path` には**1つのパスしか指定できない**（カンマ区切りで複数書くことはできない）ため。
+   - `path` は「前方一致（親パス指定）」で動くため、共通の親である `path="/users"` を指定しておけば、配下の `/users/refresh` と `/users/logout` の両方に Cookie が送られる。
+3. **`delete_cookie` の正体と、削除時にも `path="/users"` が必須な理由**
+   - **正体**：サーバーはユーザーのブラウザ内のデータを直接消せないため、`delete_cookie` の中身は実際には **`self.set_cookie(key, max_age=0, expires=0, path=path)`（有効期限0秒の空 Cookie を送りつけて上書き→即座に期限切れで消滅させる処理）** になっている。
+   - **なぜ `path="/users"` が必須か**：ブラウザは「Cookie 名 ＋ `path`」のセットで別々の Cookie として管理している。`set_cookie` のときに `path="/users"` で保存したのに、`delete_cookie("refresh_token")` とだけ書いて `path` を省略すると、既定値の `path="/"` 側を消そうとしてしまい、`path="/users"` の Cookie が上書きされず残ってしまうため。

@@ -5,19 +5,23 @@
 第17章の前半として、パスワードの安全なハッシュ化の仕組み理解から、ライブラリ選定、DB モデル・スキーマ定義、および TDD による「失敗するテスト（Red）」の作成までを完了した。
 
 ### 1. ハッシュライブラリの選定と導入
-- `pwdlib[argon2]` を `uv add` でインストール。
-- 長年定番だった `passlib` はメンテ停止により Python 3.13 で動作しないため、現代の FastAPI 公式チュートリアルが標準推奨とする `pwdlib`（内部で最新の Argon2id を使用）を採用。
+- `pwdlib` はパスワードのハッシュ化と照合を扱うライブラ
+- `pwdlib[argon2]` を `uv add` でインストール。Argon2id は、現在のパスワード保存で第一候補になる方式。
+- `Python`には、`hashlib`というハッシュを扱う標準モジュールがあるが、`Argon2`を扱うことができないため、`pwdlib`を使う
 
 ### 2. セキュリティ共通モジュール (`backend/app/core/security.py`)
-- `password_hash = PasswordHash.recommended()` をモジュールレベルで1度だけ生成（Python のモジュール仕様によるシングルトン化）。
-- `hash_password(password: str) -> str`: 平文パスワードを受け取り、内部でソルトの自動生成・結合・Argon2id ハッシュ計算を行った約97文字の文字列を返す。
-- `verify_password(plain_password: str, hashed_password: str) -> bool`: 平文パスワードと DB 内のハッシュ文字列を照合し、一致判定を返す。
+- `from pwdlib import PasswordHash` の後、`password_hash = PasswordHash.recommended()` をモジュールレベルで1度だけ生成（Python のモジュール仕様によるシングルトン化）。
+- `password_hash.hash(password)`: 平文パスワードを受け取り、内部でソルトの自動生成・結合・Argon2id ハッシュ計算を行った約97文字の文字列を返す。
+- `password_hash.verify(plain_password, hashed_password)`: 平文パスワードと DB 内のハッシュ文字列を照合し、一致判定を返す。
 
-### 3. User モデルと DB マイグレーション (`backend/app/models/user.py`)
+ソルトについて：
+- なぜ必要？ ハッシュは逆算できなくても、候補のパスワードを決めうちし、次々にハッシュ化し、保存された値と比較することで推測できる。
+- 何なの？ ハッシュ化のたびに自動生成されるランダムなデータです。保存時には文字列で表されます。
+- どこに保存？ 返される約97文字の中に含まれ、ハッシュ値と一緒に DB に保存されます。秘密にする必要はなく、照合時に再利用されます。
+
+### 3. User モデル (`backend/app/models/user.py`)
 - `User(Base)` を作成: `id` (PK), `email` (一意制約), `hashed_password` (平文保存用カラムは作らない)。
 - `hashed_password` は Argon2id の実測長（97文字）を収めるため `String(128)` で定義。
-- `backend/app/models/__init__.py` に `User` をエクスポート追加。
-- 開発用 `app.db` を一度リセットし、`alembic upgrade head` → `alembic revision --autogenerate -m "add users table"` → `alembic upgrade head` でテーブル作成。
 
 ### 4. Pydantic スキーマ (`backend/app/schemas.py`)
 - `UserCreate`: `email: EmailStr`, `password: str = Field(min_length=8, max_length=255)`, `extra="forbid"`。
@@ -28,11 +32,7 @@
 - `test_register_user`:
   - API レスポンス検証: ステータス 201、レスポンスに `password` / `hashed_password` が含まれないこと。
   - DB 検証: `db_session` を使い、保存された `hashed_password` が平文でないこと、および `verify_password()` で照合可能であることを検証。
-- 実行結果: ルート未実装のため `assert 404 == 201` で意図通り Red（失敗）を確認。
 
-**状態**: Red まで完了。次はエンドポイントの実装（Green）へ進む。
-
----
 
 ## 2. Q&A (学習中の疑問と解決まとめ)
 
@@ -62,6 +62,3 @@
 
 ### Q9. Pylance で `response.status_code` が認識されなかった原因は？バージョンが古い？
 **A.** 古いわけではなく最新（Starlette 1.3.1）。Starlette 内部の型定義が `if TYPE_CHECKING: import httpx2 as httpx` となっており、未インストールの `httpx2` を参照しているため Pylance 上で型解決できず `Any` になっていただけ。実行時は通常の `httpx` で問題なく動作する。
-
-### Q10. テストで `if user is None: raise Exception()` ではなく `assert user is not None` と書く理由は？
-**A.** pytest では `assert` が標準であり、Ruff の TRY002 警告を回避できる上、型チェッカー（Pylance）に「これ以降の行で user は None ではない」と型絞り込み（Type Narrowing）を認識させられるため。

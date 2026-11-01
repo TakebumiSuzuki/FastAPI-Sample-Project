@@ -22,11 +22,14 @@
    - 各 CRUD 関数を `async def` 化し、`db_session` の型を `AsyncSession` に変更。
    - `execute()`・`commit()`・`refresh()`・`delete()` に `await` を追加。
    - `create_item` で遅延読み込みエラーを防ぐため `await db_session.refresh(new_item, ["category"])` を追加。
+   - 第2引数を省略（None）すると `Item` のすべての通常カラム（と既に即時ロード済みのリレーション）を再取得しますが、`["category"]` を指定するとそのリストにある `category` だけを再取得し、他の通常カラムはリフレッシュしない。`["all"]`のような全部指定はできない。
+   - `selectinload` でリレーションも一緒に取得したモデルインスタンスの場合には第二引数を書かなくても、一緒にとってくれる。
 6. **ルート層（エンドポイント関数）の非同期化 (`backend/app/routes/categories.py`, `items.py`, `users.py`)**
    - 全エンドポイント関数を `async def` 化し、`db_session` の型注釈を `AsyncSession` に変更。
    - 各 CRUD 関数の呼び出しと `categories.py` の `db_session.commit()` に `await` を追加。
 7. **`pytest-asyncio` の導入と `tests/conftest.py` の非同期化 (`backend/pyproject.toml`, `backend/tests/conftest.py`)**
    - `uv add --dev pytest-asyncio` を実行し、`pyproject.toml` の `[tool.pytest.ini_options]` に `asyncio_mode = "auto"` を追加。
+   - `asyncio_mode` は、`"strict"`（デフォルト）と `"auto"` の２種類の値が取れる。`"strict"` にすると、毎回 `@pytest.mark.asyncio`という目印（デコレータ）を手動で書く必要がある。
    - `conftest.py` のエンジン・セッションを `create_async_engine("sqlite+aiosqlite:///:memory:")`・`async_sessionmaker(..., expire_on_commit=False)` に変更。
    - `db_session` フィクスチャで `async with engine.begin() as conn:` と `await conn.run_sync(Base.metadata.create_all / drop_all)` を使う形に変更。
    - `client` フィクスチャを `TestClient` から `httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://test")` に変更し、`seed_users`・`logged_in_context` も非同期化。
@@ -55,6 +58,7 @@
 - **本来の非同期 I/O（PostgreSQL の `asyncpg` や HTTP 通信など）は、ネットワークソケットを使うため別スレッドを一切使わず1スレッドだけで動く。**
 - 一方、**SQLite は通信相手（DB サーバー）がおらずローカルディスク上のファイルを直接読み書きする仕組み**であり、OS や SQLite 本体にソケットのような非同期イベント通知の仕組みがない。
 - そのため、`aiosqlite` は例外的に「裏で専用ワーカースレッドを1つ立てて `sqlite3` のファイル読み書きを代行させ、メインスレッドのイベントループには `Future`（`await`）で制御を返す」という擬似的な仕組みで非同期インターフェースを実現している。
+- 結局ここで言いたいことは、`sqlite`では、`postgresql`を使った時と同じような、非同期I/O（外のDBサーバーの返事を待つ状態）を擬似的に作り出しているということ。
 
 ```
 [本来の非同期 (PostgreSQL + asyncpg 等)]
