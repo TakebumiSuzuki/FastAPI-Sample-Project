@@ -13,16 +13,17 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # ④ クラス定義のデフォルト値（app_name = "FastAPI App" など）
 # ちなみに pydantci_settings は変数名の大文字小文字を区別しない。
 class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env")
     app_name: str = "FastAPI App"
     admin_email: EmailStr
     items_per_user: int = 50
     database_url: str
+
+    # 以下の4つはすべて JWT のための設定値
     secret_key: str
-    algorithm: str = "HS256"
+    algorithm: str = "HS256"  # 署名アルゴリズム
     access_token_expire_minutes: int = 10
     refresh_token_expire_days: int = 30
-
-    model_config = SettingsConfigDict(env_file=".env")
 
 
 # API リクエストのたびに Settings() を呼ぶと、毎回インスタンス化をすることになり、

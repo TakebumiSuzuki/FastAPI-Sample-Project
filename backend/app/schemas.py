@@ -79,6 +79,7 @@ class CategoryCreate(CategoryBase):
 class UserCreate(BaseModel):
     email: EmailStr
     password: str = Field(max_length=255, min_length=8)
+
     model_config = ConfigDict(extra="forbid")
 
     @field_validator("password", mode="after")
@@ -108,6 +109,8 @@ class Token(BaseModel):
     token_type: str = "bearer"
 
 
+# エラー内容を統一して、攻撃者にヒントを与えないため、field_validator を使ったチェックは
+# つけない。DoS攻撃対策で、Field(max_length=255)のような文字数上限だけを付けるのはあり。
 class UserLogin(BaseModel):
     email: EmailStr
     password: str

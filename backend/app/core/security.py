@@ -17,9 +17,17 @@ def hash_password(password: str) -> str:
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
+    # hashed_password の前半から、アルゴリズム名・バージョン・計算設定・ソルトを取り出し、
+    # それを使って、plain_password を同じ条件でハッシュ化し、比較する。
     return password_hash.verify(plain_password, hashed_password)
 
 
+# トークンの作られ方（access, refresh 両方同じ）
+#   1. ヘッダーとペイロードを、それぞれ個別に Base64URL エンコードし、.(ドッド)で繋ぐ。
+#   ヘッダーには、 {"alg": "HS256", "typ": "JWT"}　のような情報が入る。
+#   2. 繋いだ文字列にアプリの secret_key を加えてハッシュ計算を行い、その結果も
+#   Base64URL エンコードして「署名」を作る。
+#   3. 最後に署名を . でくっつけて、ヘッダー.ペイロード.署名 の形にする。
 def create_access_token(data: dict[str, Any]) -> str:
     settings = get_settings()
 
@@ -32,7 +40,7 @@ def create_access_token(data: dict[str, Any]) -> str:
     # （UNIXタイムスタンプ：1970年からの経過秒数）へ変換してくれます。
     to_encode["exp"] = expire
     # access_token も refresh_token もデータとしては区別がない
-    # typeはアプリ側が区別のために入れる独自項目です。
+    # typeはアプリ側が区別のために入れる独自項目。
     to_encode["type"] = "access"
     to_encode["jti"] = str(uuid.uuid4())
 
