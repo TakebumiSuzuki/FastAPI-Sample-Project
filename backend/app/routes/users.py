@@ -56,6 +56,7 @@ async def login_user(
         refresh_token=refresh_token,
     )
 
+    # SameSite は、すでに Lax が有効として Starletに実装ずみ
     response.set_cookie(
         key="refresh_token",
         value=refresh_token,

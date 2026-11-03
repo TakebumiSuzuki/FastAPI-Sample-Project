@@ -6,7 +6,10 @@ from app.core.config import get_settings
 
 engine = create_async_engine(
     get_settings().database_url,
+    # 以下は PostgreSQL では不要
     connect_args={"check_same_thread": False},
+    # SQLのメッセージを標準出力に出す設定。
+    # logging で設定する時は不要。デフォルトは False
     echo=True,
 )
 

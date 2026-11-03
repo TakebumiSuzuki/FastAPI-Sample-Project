@@ -5,7 +5,6 @@ import jwt
 from fastapi import Depends, Query
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.core.session import SessionLocal

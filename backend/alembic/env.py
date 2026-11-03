@@ -72,9 +72,13 @@ async def run_async_migrations_online() -> None:
     and associate a connection with the context.
 
     """
+    # conncectable はエンジンそのもの。Alembic のテンプレートが .connect() を呼べる対象
+    # という意味で connectable という変数名をつけていル。
     connectable = async_engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
+        # スロットなし（毎回その場で新規接続） ──> 終わったら即座に切断（close）して捨てる、つまり、
+        # プールそのものがない、という設定
         poolclass=pool.NullPool,
     )
     # NullPool（プールせず毎回新規接続する設定）を使っているため、async withに入るたびに「実際に DB ファイル（または DB サーバー）へ接続を開くI/O」が発生し、ドライバの await futureによってイベントループへ制御が返ります
@@ -88,5 +92,8 @@ async def run_async_migrations_online() -> None:
 if context.is_offline_mode():
     run_migrations_offline()
 else:
-    # Alembic の場合：alembic コマンド自体は同期で動く CLIツールでイベントループを持っていないため、env.py:89 の asyncio.run(...)でその場限りのイベントループを立ち上げて非同期エンジン（sqlite+aiosqlite）を動かしています。
+    # FastAPI実行時はサーバー（uvicorn）が非同期処理の実行基盤（イベントループ）を自動で動かしているが、
+    # alembicコマンド実行時はuvicornが動いていない（ただのPythonスクリプトとして上から順に実行される）ため、
+    # async def で定義した run_async_migrations_online() をそのままでは呼び出せない。
+    # そこで asyncio.run(...) を使って、マイグレーション実行中だけイベントループを自分で立ち上げている。
     asyncio.run(run_async_migrations_online())
