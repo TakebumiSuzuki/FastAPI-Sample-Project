@@ -62,7 +62,7 @@
 
 ```
 [本来の非同期 (PostgreSQL + asyncpg 等)]
-メインスレッド (Event Loop) ──(ソケット送信・別タスクへ切替)──> DBサーバー (別プロセス)
+メインスレッド (Event Loop) ──(ソケット送信・別タスクへ切替)──> DBサーバ
 
 [SQLite の非同期 (aiosqlite)]
 メインスレッド (Event Loop) ──(Futureで待って別タスクへ切替)──> 裏の専用スレッド (sqlite3ファイル読込)

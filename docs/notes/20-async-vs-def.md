@@ -29,6 +29,7 @@
 
 ### Q1. FastAPI 自体が `asyncio` のイベントループを動かしているのか？
 **A.** イベントループを立ち上げて回している主役は **uvicorn**（`Server.run` 内の `asyncio_run`）。
+- uvicorn を起動するとプロセスが作られ、その `MainThread`（メインスレッド）の最上位でイベントループ（`_run_once`）が回り始める。イベントループの主な仕事は、①OSカーネルに溜まったリクエスト等を `_selector.select()` で取り出してイベントループ内の `_ready` キューに積むこと、② `_ready` キューから FIFO（先入れ先出し）で取り出してタスクを実行することの2つ。
 - `app = FastAPI()` 本体は「常駐する1つのタスク」ではなく、`async def __call__(self, scope, receive, send)` を持つ**巨大な非同期 callable（呼び出し可能）オブジェクト**。
 - uvicorn は **HTTP リクエストが1件届くたびに** `self.loop.create_task(self.cycle.run_asgi(app))` で新しいタスクを1つ作り、その中で `await app(...)` を呼び出し、レスポンスを返したらそのタスクは終了する。
 
