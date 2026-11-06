@@ -1,8 +1,17 @@
 from collections.abc import AsyncGenerator
 
 import pytest
+
+# Uvicorn の代わりに pytest-asyncioが非同期処理の実行エンジンであるイベントループを起動し、
+# その上で動きます。そこでブラウザ役の AsyncClientが送ったリクエストを、Uvicorn の
+# 変換役を兼ねる ASGITransport が ASGI 規格の3引数に変換して
+# await app(scope, receive, send) と app を直接呼び出します。
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+# sqlalchemy.poolには全7種類（基本5種類＋非同期用QueuePool2種類）のプールが存在し、
+# 通常のデフォルトは QueuePool（非同期はAsyncAdaptedQueuePool）
+# PostgreSQL で非同期テストを書くときは NullPool を使う
 from sqlalchemy.pool import StaticPool
 
 from app.crud.user import create_user
@@ -23,13 +32,19 @@ TestingAsyncSessionLocal = async_sessionmaker(
 
 @pytest.fixture
 async def db_session() -> AsyncGenerator[AsyncSession]:
+    # engine.begin() は、 engine.connect()（コネクション生成＋DB接続）と
+    # conn.begin()（自動 commit/rollback を担うトランザクション管理オブジェクト生成）を
+    # まとめて行い、変数 conn にコネクション（AsyncConnection）を渡すショートカット。
+    # ここでのトランザクションオブジェクトは Core の方のもの。
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
     session = TestingAsyncSessionLocal()
     try:
         yield session
     finally:
         await session.close()
+
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.drop_all)
 
@@ -44,7 +59,9 @@ async def client(db_session: AsyncSession) -> AsyncGenerator[AsyncClient]:
 
     app.dependency_overrides[get_db_session] = override_get_db
     async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test"
+        # http://test は、URLの形式チェックを通すためのダミーの文字列。
+        transport=ASGITransport(app=app),
+        base_url="http://test",
     ) as ac:
         yield ac
     app.dependency_overrides.clear()

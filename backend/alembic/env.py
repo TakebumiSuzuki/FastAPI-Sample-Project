@@ -1,9 +1,6 @@
-import asyncio
 from logging.config import fileConfig
 
-from sqlalchemy import pool
-from sqlalchemy.engine import Connection
-from sqlalchemy.ext.asyncio import async_engine_from_config
+from sqlalchemy import engine_from_config, pool
 
 from alembic import context
 from app.core.config import get_settings
@@ -29,7 +26,9 @@ target_metadata = Base.metadata
 # my_important_option = config.get_main_option("my_important_option")
 # ... etc.
 
-config.set_main_option("sqlalchemy.url", get_settings().database_url)
+config.set_main_option(
+    "sqlalchemy.url", get_settings().database_url.replace("+aiosqlite", "")
+)
 
 
 def run_migrations_offline() -> None:
@@ -57,15 +56,7 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 
-def do_run_migrations(connection: Connection) -> None:
-    context.configure(
-        render_as_batch=True, connection=connection, target_metadata=target_metadata
-    )
-    with context.begin_transaction():
-        context.run_migrations()
-
-
-async def run_async_migrations_online() -> None:
+def run_migrations_online() -> None:
     """Run migrations in 'online' mode.
 
     In this scenario we need to create an Engine
@@ -74,26 +65,25 @@ async def run_async_migrations_online() -> None:
     """
     # conncectable はエンジンそのもの。Alembic のテンプレートが .connect() を呼べる対象
     # という意味で connectable という変数名をつけていル。
-    connectable = async_engine_from_config(
+    connectable = engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
         # スロットなし（毎回その場で新規接続） ──> 終わったら即座に切断（close）して捨てる、つまり、
         # プールそのものがない、という設定
         poolclass=pool.NullPool,
     )
-    # NullPool（プールせず毎回新規接続する設定）を使っているため、async withに入るたびに「実際に DB ファイル（または DB サーバー）へ接続を開くI/O」が発生し、ドライバの await futureによってイベントループへ制御が返ります
-    async with connectable.connect() as connection:
-        # Alembic 本体（context.run_migrations()の内部）が非同期（async/await）に対応しておらず、「同期の Connection を使って awaitなしで SQL を実行する」 作りになっているためです。
-        await connection.run_sync(do_run_migrations)
+    # NullPool（プールせず毎回新規接続する設定）を使っているため、with に入るたびに「実際に DB ファイル（または DB サーバー）へ接続を開く I/O」が発生し、ブロックを抜けると即座に切断されます。
+    with connectable.connect() as connection:
+        # Alembic 本体（context.run_migrations() の内部）は「同期の Connection を使ってそのまま SQL を実行する」作りになっているため、取得した connection を直接渡して実行します。
+        context.configure(
+            render_as_batch=True, connection=connection, target_metadata=target_metadata
+        )
 
-    await connectable.dispose()
+        with context.begin_transaction():
+            context.run_migrations()
 
 
 if context.is_offline_mode():
     run_migrations_offline()
 else:
-    # FastAPI実行時はサーバー（uvicorn）が非同期処理の実行基盤（イベントループ）を自動で動かしているが、
-    # alembicコマンド実行時はuvicornが動いていない（ただのPythonスクリプトとして上から順に実行される）ため、
-    # async def で定義した run_async_migrations_online() をそのままでは呼び出せない。
-    # そこで asyncio.run(...) を使って、マイグレーション実行中だけイベントループを自分で立ち上げている。
-    asyncio.run(run_async_migrations_online())
+    run_migrations_online()
