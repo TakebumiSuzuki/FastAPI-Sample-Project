@@ -12,6 +12,10 @@ config = context.config
 
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.
+
+# config.config_file_name は Config オブジェクトの属性で、
+# CLI（alembic コマンド）で実行時は "alembic.ini" がデフォルト値
+# つまり、ここでは "alembic.ini" にかいてあるロガー設定を読み込んでいる。
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
@@ -27,7 +31,8 @@ target_metadata = Base.metadata
 # ... etc.
 
 config.set_main_option(
-    "sqlalchemy.url", get_settings().database_url.replace("+aiosqlite", "")
+    "sqlalchemy.url",
+    get_settings().database_url.replace("+aiosqlite", ""),
 )
 
 
@@ -69,16 +74,22 @@ def run_migrations_online() -> None:
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
         # スロットなし（毎回その場で新規接続） ──> 終わったら即座に切断（close）して捨てる、つまり、
-        # プールそのものがない、という設定
+        # 接続を保管・再利用しないタイプの Pool オブジェクトを使う設定
         poolclass=pool.NullPool,
     )
     # NullPool（プールせず毎回新規接続する設定）を使っているため、with に入るたびに「実際に DB ファイル（または DB サーバー）へ接続を開く I/O」が発生し、ブロックを抜けると即座に切断されます。
     with connectable.connect() as connection:
         # Alembic 本体（context.run_migrations() の内部）は「同期の Connection を使ってそのまま SQL を実行する」作りになっているため、取得した connection を直接渡して実行します。
         context.configure(
-            render_as_batch=True, connection=connection, target_metadata=target_metadata
+            # render_as_batch は、SQLite用の設定
+            render_as_batch=True,
+            connection=connection,
+            target_metadata=target_metadata,
         )
 
+        # Session のように別階層の SessionTransaction が作られるわけではなく、トランザクションの
+        # 実体は Connection 側の RootTransaction のみ（connection.begin() 等で取得し、context 側は
+        # それを中継する薄いラッパー _ProxyTransaction を with に返しているだけ）。
         with context.begin_transaction():
             context.run_migrations()
 

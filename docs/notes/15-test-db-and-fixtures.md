@@ -8,7 +8,7 @@
 - `@pytest.fixture` を定義し、`yield` の前後に準備・後片付けを記述。
 - `db_session` フィクスチャ: テスト実行直前に `create_all` でテーブル作成、`yield` 後に `drop_all` で削除。
 - `client` フィクスチャ: `app.dependency_overrides[get_db_session]` にテスト用セッションを割り当て、`TestClient(app)` を作成。
-- `StaticPool`: スレッド間（FastAPI の非同期処理）でインメモリ DB を共有するために `poolclass=StaticPool` を指定。
+- `StaticPool`: スレッド間（FastAPI の非同期処理）でインメモリ DB を共有するために `poolclass=StaticPool` を指定。`StaticPool` は、`SQLite` のインメモリモード（`:memory:`）を使っているから必要。 `Postgres`の場合には、`NullPool`を使う。
 
 ---
 
@@ -32,7 +32,7 @@
 ### Q6. `dependency_overrides` とは？
 **A.** FastAPI が持つ「依存関係を上書きする辞書（`dict`）」。
 - **キー**: 本番用関数（`get_db_session`）
-- **値**: テスト用差し替え関数（`override_get_db`）  
+- **値**: テスト用差し替え関数（`override_get_db`）
 テスト実行時に `Depends(get_db_session)` を検知すると、自動でテスト用関数へ差し替えて呼び出してくれる。
 
 ### Q7. `db_session` と `client` のフィクスチャを分ける理由は？
@@ -48,6 +48,6 @@
 **A.** `response.text`（JSON 文字列）を取り出し、`json.loads(response.text)` を実行して Python の辞書（`dict`）に復元している便利ショートカットメソッド。
 
 ### Q10. `no such table` や Pydantic バリデーションエラーが起きた原因は？
-**A.** 
+**A.**
 1. **`no such table`**: SQLite in-memory は接続スレッドごとに別の空 DB になるため、`StaticPool` で接続を共有して解決。
 2. **`ResponseValidationError`**: `Category` の `name` が `min_length=3` 以上を要求していたため、テスト用カテゴリ名を 3 文字以上（`"家電製品"`）に変更して解決。

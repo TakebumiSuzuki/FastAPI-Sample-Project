@@ -22,9 +22,10 @@
   - **`joinedload`（推奨: 多対1 / 1対1）**: `Item` -> `Category` のように関連先が1件の場合に使用。`LEFT OUTER JOIN` を使い1回の SQL クエリで一括取得する。
   - **`selectinload`（推奨: 1対多）**: `Category` -> `Items` のように関連先が複数の場合に使用。`WHERE id IN (...)` 句を用いて2回の SQL クエリで効率よく取得する。
 - **Eager Loading を忘れた場合の挙動**:
-  - 同期セッションではエラーにならず、Pydantic のシリアライズ時に裏で Lazy Load（N+1 クエリ）が走る。
+  - 同期セッションではエラーにならず、Pydantic のシリアライズ時に裏で Lazy Load（N+1 クエリ）が走る。（`from_attributes=True` を設定し、さらにレスポンス用スキーマが `items: list[ItemResponse]`のように関連データを入れ子で持っている場合の話）
 
 ### ④ ネストしたレスポンススキーマと Python の型評価
+- `Python 3.14` から「型注釈の遅延評価（PEP 649 / PEP 749：型ヒントをクラス定義時ではなく、実際に必要になった瞬間に評価する仕組み）」が標準になったため、以下は `3.13` 以前の話
 - **ネスト構造**: `ItemPublic` スキーマ内に `category: CategoryPublic` を指定することで、1つの API レスポンスで親子のネストした JSON 構造を自動返却できる。
 - **前方参照（Forward Reference）**: Python は上から順にクラスを評価するため、未定義クラスを参照すると `NameError` になる。文字列（`"CategoryPublic"`）で型注釈を書くことで即時評価を回避し、型定義順序の制約を解除できる（PEP 484 仕様）。
 

@@ -49,6 +49,32 @@ TDD（Test-Driven Development）は「プロダクトコードを書く前に、
 
 ---
 
+> ### 💡 コラム：`TestClient` で十分なケースと、`httpx.AsyncClient` が必要になるケース
+>
+> そもそも `TestClient` は「同期のコードしか扱えないクライアント」ではなく、**アプリのエンドポイントや `Depends` が同期（`def`）でも非同期（`async def`）でもそのまま扱える**。これは、`TestClient` がリクエストを送るたびに**自分の内部でイベントループを立ち上げ**、非同期対応の状態で `app` を呼び出してくれるためである。
+>
+> しかし、イベントループが動いているのはあくまで **`TestClient` の内側だけ** である。そのため、テスト関数や `conftest.py` の fixture で非同期 DB（`AsyncSession`）への通信や初期データ投入などを直接行おうとすると、そこは **`TestClient` を通さない領域（＝イベントループの外側）** であるため、`await` を実行できずエラーになってしまう。
+>
+> よって、以下のように使い分けることになる。
+> - **テスト側で非同期 DB などを直接触らない場合**：`TestClient` だけで完結する（追加プラグイン不要）。
+> - **テスト側でも非同期 DB 通信などを行う場合**：もっと上位の **`pytest` 本体自体をイベントループ上で動かす** 必要があるため、`pytest-asyncio` を導入したうえで、同じイベントループ上でそのまま動く `httpx.AsyncClient`（＋ `ASGITransport`）を使用する。
+>
+> ```text
+> ① TestClient の場合（TestClient の内側だけイベントループが回る）
+>   pytest (同期・ループなし)
+>    ├── テスト側の処理 (conftest.py 等) ← TestClient を通さないので await 不可
+>    └── client.get()
+>         └── [イベントループ] ──> app (async def / def どちらも動く)
+>
+> ② pytest-asyncio + AsyncClient の場合（上位の pytest 全体でイベントループが回る）
+>   pytest + pytest-asyncio
+>    └── [イベントループ]
+>         ├── テスト側の非同期DB処理 (conftest.py 等) ← await できる！
+>         └── await client.get() ──> app              ← 同じループ上で動く！
+> ```
+
+---
+
 ### Q4. `from main import app` で `ModuleNotFoundError: No module named 'main'` になったのはなぜ？
 **A.** `pytest` コマンド実行時、**カレント作業ディレクトリ（CWD）が自動で Python の `sys.path` に入らない** ため。
 - 通常の `python` コマンド実行時は CWD が `sys.path` に追加されるが、`pytest` 単体で実行するとルート判定により手前のフォルダが対象外になることがある。

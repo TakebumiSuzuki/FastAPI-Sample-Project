@@ -61,7 +61,9 @@ Pythonの構文糖（`@`）において、実行は以下の順序で行われ�
 class APIRouter:
     def get(self, path: str, ...):
         def decorator(func):
-            # ルーター内部のエンドポイント登録処理
+            # ルーター内部のエンドポイント登録処理： func (エンドポイント関数) を引数に取っている
+            # のがポイントで、ここから必要な引数（依存性）とその取得方法（Dependant）を取り出し、
+            # path・func本体と束ねたAPIRouteオブジェクトを作ってself.routesに追加する（副作用）
             self.add_api_route(path, func, methods=["GET"], ...)
             return func  # 関数自体はそのまま返す
         return decorator
@@ -78,6 +80,7 @@ FastAPIアプリケーションの起動時（モジュール読み込み時）�
 
 ```
 def add_api_route(self, path: str, endpoint: Callable, **kwargs):
+   # (endpoint というのはエンドポイント関数 (func) の事)
    # 1. ルーター共通の設定と、引数の個別設定を合成する
    # tags（タグ）: Swagger に使われるだけ。ドキュメントの見出し分けの用途。
    current_tags = self.tags + (kwargs.get("tags") or [])
@@ -103,7 +106,7 @@ def add_api_route(self, path: str, endpoint: Callable, **kwargs):
 ```
 
 ### `get_dependant` 関数とは？
-    エンドポイント関数と URL パスを解析し、「HTTPリクエストからどのようにデータを取り出して関数に渡すか」の実行設計図（`Dependant`）を作る関数です。
+    エンドポイント関数と URL パスを解析し、「HTTPリクエストからどのようにデータを取り出して関数に渡すか」の実行設計図（`Dependant`）を作る関数です。つまり、戻り値は `Dependant` クラスのインスタンス。
 
     * **何をしているのか**:
       1. **引数の判別**: `path`（URL）と引数名を比較し、パスパラメータかクエリパラメータかを自動で仕分ける。
@@ -133,18 +136,19 @@ FastAPIは関数の引数が **「どこから取得されるべき値か」** �
 `Dependant` クラス（`fastapi.dependencies.models.Dependant`）は、関数の引数をどのように解決（収集・検証）するかを記録した**統一設計図オブジェクト**です。
 
 ### 固定された主要属性
-`Dependant` の属性名は固定で決まっており、あらゆる複雑な引数の組み合わせを整然と分類・格納します。
+`Dependant` の属性名は固定で決まっており、あらゆる複雑な引数の組み合わせを整然と分類・格納します。`call` 以外の各パラメータ・依存関係の属性はすべて**リスト**になっており、複数あればその分だけ要素が入り、該当する引数がない場合は空のリスト（`[]`）が入ります。
 
 | 属性名 | 格納されるデータ | 具体例 |
 | :--- | :--- | :--- |
 | `call` | 最終的に実行する関数本体 | `read_item`（エンドポイント関数）や `get_db`（依存関数） |
-| `path_params` | URLパスから抽出・検証する引数 | `item_id: Annotated[int, Path(ge=1)]` |
-| `query_params` | クエリ文字列から抽出する引数 | `limit: int = 10`, `q: str \| None = None` |
-| `header_params` | HTTPリクエストヘッダーから抽出する引数 | `user_agent: Annotated[str, Header()]` |
-| `cookie_params` | Cookieから抽出する引数 | `session_id: Annotated[str, Cookie()]` |
-| `body_params` | リクエストボディ（JSON, Form, File） | `item: ItemCreate`, `file: UploadFile` |
-| `dependencies` | `Depends(...)` で指定された依存関係（依存関数がさらに別の依存関係を持つ入れ子構造も含む） | `db: Annotated[Session, Depends(get_db)]` |
-| `security_requirements` | 認証・認可に関するセキュリティ定義 | `OAuth2PasswordBearer` 等のスキーム |
+| `path_params` | URLパスから抽出・検証する引数のリスト | `item_id: Annotated[int, Path(ge=1)]` |
+| `query_params` | クエリ文字列から抽出する引数のリスト | `limit: int = 10`, `q: str \| None = None` |
+| `header_params` | HTTPリクエストヘッダーから抽出する引数のリスト | `user_agent: Annotated[str, Header()]` |
+| `cookie_params` | Cookieから抽出する引数のリスト | `session_id: Annotated[str, Cookie()]` |
+| `body_params` | リクエストボディ（JSON, Form, File）のリスト | `item: ItemCreate`, `file: UploadFile` |
+| `dependencies` | `Depends(...)` で指定された依存関係のリスト（入れ子構造や、`OAuth2PasswordBearer` 等のセキュリティ定義もここに統一される※） | `db: Annotated[Session, Depends(get_db)]` |
+
+※以前のバージョンにあった `security_requirements`（これもリスト）は廃止され、現在は `dependencies` の中に統一されています。
 
 > **ポイント**:
 > 関数の引数がいかに複雑であっても（パス＋クエリ＋ボディ＋ヘッダー＋多段のDepends）、すべてこの `Dependant` オブジェクトの各リストに過不足なく分類されて収まります。

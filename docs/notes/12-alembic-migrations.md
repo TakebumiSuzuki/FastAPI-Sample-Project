@@ -17,23 +17,19 @@
   ```bash
   uv run alembic init --template pyproject alembic
   ```
-  既存の `pyproject.toml` があればそこに `[tool.alembic]` を追記してくれる。
-- ただし **書ける設定に線引きがある**。
+  既存の `pyproject.toml` があればそこに `[tool.alembic]` を追記し、残りの設定だけが入った短い `alembic.ini` もあわせて生成してくれる。
+- なぜファイルが分かれるかというと、**書ける設定に線引きがある**ため。
 
-  | 置き場所 | 書ける設定 |
+  | 置き場所 | 書ける設定・役割 |
   | :--- | :--- |
-  | `pyproject.toml` の `[tool.alembic]` | `script_location`、`prepend_sys_path`、`version_locations`、`file_template`、`post_write_hooks` |
-  | `alembic.ini` または `env.py` | `sqlalchemy.url`（DB 接続情報）、`[loggers]` などのログ設定 |
+  | `pyproject.toml` の `[tool.alembic]` | `script_location`、`prepend_sys_path`、`version_locations`、`file_template`、`post_write_hooks`（コード配置などプロジェクト固定の静的な設定） |
+  | `alembic.ini` | `[loggers]` などのログ設定（Python 標準 `logging.config` の `fileConfig()` は `.ini` 形式しか解釈できず、TOML を直接読み込む機能が未実装なため `pyproject.toml` には書けない）。また、従来はここにさらに、 `[alembic]` セクション（静的な設定や `sqlalchemy.url`など）も記述していたが、モダンな構成では静的な設定は `pyproject.toml` に書き、URL は `env.py` で動的に読み込むため実質、`[alembic]` セクションは書かない |
+  | `env.py`（Python コード） | `.env` 等から DB 接続情報を動的に読み込んで `sqlalchemy.url` をセットする処理、`target_metadata`（モデルの登録） |
 
 - この線引きの理由は、作者 zzzeek が Issue #1082 で述べているとおり「DB URL は dev と production で変わる値だから」。
   つまり **ソースコードの配置に関する設定** と **環境ごとに変わるデプロイ設定** を分ける、という設計判断。
   Git にコミットされる `pyproject.toml` に、環境依存の値を置かせないようにしている。
-- なお `alembic.ini` は必須ではない。公式チュートリアルにも「接続情報とログ設定を他の場所で管理していれば `alembic.ini` が無い環境も可能」とある。
-  このプロジェクトは既にその条件を満たしている：
-  - DB URL → `env.py` で `.env` から読んでいる（ini を見ていない）
-  - ログ設定 → `env.py` の該当行が `if config.config_file_name is not None:` でガードされているので、ini が無ければスキップされるだけ
-
-  参考: [Alembic Tutorial](https://alembic.sqlalchemy.org/en/latest/tutorial.html) / [Issue #1082](https://github.com/sqlalchemy/alembic/issues/1082)
+- なお、接続情報とログ設定を他の場所で管理していれば `alembic.ini` が無い環境も可能
 
 ---
 
@@ -107,17 +103,24 @@ uv run alembic upgrade head
 
 ---
 
-## 5. 進捗状況と次回（第13章）への引き継ぎ
+## 5. `env.py` が使われるタイミングと `context.run_migrations()` の仕組み
 
-### 進捗状況
-1. `uv add alembic` および `alembic init alembic` による初期化完了。
-2. `alembic/env.py` の編集完了（`Base.metadata` 連携、モデルインポート、`.env` 接続情報取得）。
-3. 初回のマイグレーション作成（`create items table`）と `alembic upgrade head` による DB 反映の動作確認完了。
+- **`env.py` が実行されるタイミング**:
+  - **DB 接続が必要なコマンドすべて**: `revision --autogenerate`、`upgrade`、`downgrade`、`current`、`check`、`stamp` など。
+  - **実行されないコマンド（ローカルファイルのみ参照）**: `history`、`heads`、`--autogenerate` なしの `revision` など。
+- **なぜすべて同じ `context.run_migrations()` で違う処理が動くのか**:
+  - `env.py` 自体は今どのコマンドが実行されているかを知らない（DB 接続を用意して最後に `context.run_migrations()` のスイッチを押すだけの係）。
+  - `env.py` が呼ばれる直前に、Alembic 本体（`alembic/command.py`）がコマンドの種類に応じて `context` 内のコールバック関数（`fn`）を差し替えている。
 
-第12章「Alembic でマイグレーション」が完了しました！
+```text
+command.py がコマンドを受け取る
+  ├─ revision --autogenerate ──> context に「差分比較する関数」をセット
+  ├─ upgrade head            ──> context に「upgrade() を実行する関数」をセット
+  ├─ downgrade -1            ──> context に「downgrade() を実行する関数」をセット
+  └─ current                 ──> context に「現在の版を表示する関数」をセット
+        │
+        ▼
+env.py を実行（Engine 作成 → Connection 取得 → context.run_migrations() で上記の関数を実行）
+```
 
-### 次回やること（第13章：リレーションと N+1）
-- 1対多のリレーション（`relationship()` / 外部キー）
-- 遅延読み込みと N+1 問題の理解
-- `selectinload` / `joinedload` による解決
-- ネストしたレスポンススキーマの書き方
+

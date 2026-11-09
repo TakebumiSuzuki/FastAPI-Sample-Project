@@ -2,9 +2,9 @@ from collections.abc import AsyncGenerator
 
 import pytest
 
-# Uvicorn の代わりに pytest-asyncioが非同期処理の実行エンジンであるイベントループを起動し、
-# その上で動きます。そこでブラウザ役の AsyncClientが送ったリクエストを、Uvicorn の
-# 変換役を兼ねる ASGITransport が ASGI 規格の3引数に変換して
+# Uvicorn の代わりに pytest-asyncioがイベントループを起動し、
+# その上で動きます。そこでブラウザ役の AsyncClientが送ったリクエストを、
+# Uvicorn の変換役を兼ねる ASGITransport が ASGI 規格の3引数に変換して
 # await app(scope, receive, send) と app を直接呼び出します。
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -35,7 +35,12 @@ async def db_session() -> AsyncGenerator[AsyncSession]:
     # engine.begin() は、 engine.connect()（コネクション生成＋DB接続）と
     # conn.begin()（自動 commit/rollback を担うトランザクション管理オブジェクト生成）を
     # まとめて行い、変数 conn にコネクション（AsyncConnection）を渡すショートカット。
-    # ここでのトランザクションオブジェクトは Core の方のもの。
+    # ここでできるトランザクションオブジェクトは Core の方のもの。
+
+    # run_sync がやっていること
+    # 1. conn が内部に持つ「同期用 Connection (self._proxied)」を取り出す
+    # 2. Base.metadata.create_all(同期用 Connection) を自動で呼び出す
+    # 3. create_all が発行した CREATE TABLE 文を、裏で非同期ドライバへ await で中継する
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 

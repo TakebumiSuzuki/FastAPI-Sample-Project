@@ -50,7 +50,7 @@ flowchart LR
 ```python
 from datetime import datetime
 from typing import Annotated
-from sqlalchemy import String, TIMESTAMP, func
+from sqlalchemy import DateTime, String, func
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 str50 = Annotated[str, 50]
@@ -58,7 +58,7 @@ str50 = Annotated[str, 50]
 class Base(DeclarativeBase):
     type_annotation_map = {
         str50: String(50),
-        datetime: TIMESTAMP(timezone=True),
+        datetime: DateTime(timezone=True),
     }
 
 class User(Base):
@@ -69,6 +69,8 @@ class User(Base):
     email: Mapped[str50 | None]          # VARCHAR(50) NULL
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 ```
+
+※ SQLAlchemy の `DateTime` はデフォルトが `timezone=False` なため、PostgreSQL でもタイムゾーン付き（`TIMESTAMP WITH TIME ZONE`）にするには `timezone=True` を明示的に書く必要がある。
 
 ---
 
@@ -88,7 +90,7 @@ user.created_at = "2020-01-01"   # 文字列。ここでは何も起きない
 ### エラーの種類と発生場所
 
 `commit()` を呼んでから DB に行が書き込まれるまでには、3人の登場人物が順に仕事をする。
-エラーはそれぞれの段階で別の名前で出るため、例外名を見ればどこで失敗したかが分かる。
+エラーはそれぞれの段階で別の名前で出るため、例外名を見ればどこで失敗したかが大体分かる。
 以下は Postgres（ドライバは psycopg）を使った場合の流れ。
 
 ```text
@@ -153,16 +155,16 @@ session.commit()
 ### `bind_processor` が何をするか（DB によって違う）
 
 3番の `bind_processor` は「Python の値を、ドライバが受け取れる形に直す」担当だが、
-**何をするかは DB ごとに違う。**
+**何をするかは DB・ドライバや型の設定によって違う。**
 
 - **SQLite**: `datetime(2020, 1, 1)` はそのままでは保存できないので、
   ここで `"2020-01-01 00:00:00"` という文字列に直す。
 - **Postgres**: psycopg が `datetime` をそのまま扱えるので、SQLAlchemy 側で直す必要がない。
-  そのため `datetime` 用の変換処理が**登録されておらず**、この段階は素通りする。
+  そのため通常は SQLAlchemy 側の変換処理を通さず、ドライバに値を渡す。
 
-実際に確認したところ（`backend/` で `uv run python` を実行）、Postgres では
-`Integer` / `String` / `DateTime` はいずれも変換処理を持たず（`bind_processor` が `None`）、
-`Numeric` と `Boolean` だけが処理を持っていた。SQLite ではこれに `DateTime` が加わる。
+`Integer` / `String` / `DateTime` などは、Postgres + psycopg では通常、
+`bind_processor` が `None` となる。一方、SQLite の `DateTime` などでは変換処理が入る。
+`Numeric` や `Boolean` も含め、処理の有無は DB・ドライバや設定によって異なる。
 
 **同じコードでも、変換が起きる場所とエラーの出る場所が DB によって変わる**、ということになる。
 

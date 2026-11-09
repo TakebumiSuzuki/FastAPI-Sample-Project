@@ -1,8 +1,10 @@
 # POST リクエストから DB 保存・取得までのデータ型ライフサイクル
 
-FastAPI における POST リクエストの受信から、DB 保存、データ取り出し、レスポンス返却までの「データの流れ」と「各段階での型の変化」、および SQLAlchemy における型注釈と実動作の関係について解説します。
+Sqliteではなく、PostgreSQLの前提で、FastAPI における POST リクエストの受信から、DB 保存、データ取り出し、レスポンス返却までの「データの流れ」と「各段階での型の変化」、および SQLAlchemy における型注釈と実動作の関係について解説します。
 
 ---
+
+注意：残念ながら以下の記述はあまり参考にならない。本来は、SQLAlchemy モデルの左辺（Mapped[Decimal]）も、Pydantic のリクエスト・レスポンス（ItemCreate / ItemPublic）もすべて Decimal で統一するのが一番綺麗で安全な設計。
 
 ## 1. 全体の流れとデータ型の変遷（概要）
 
@@ -25,24 +27,25 @@ FastAPI における POST リクエストの受信から、DB 保存、データ
   Item.price：float（インスタンス化時は値がそのまま代入されるだけ）
     │
     ▼ ⑤ DB 送信（SQLAlchemy + psycopg 等の DB ドライバ）
-  SQL 文と float パラメータをバイナリ形式にエンコードして送信
+  SQL 文と float パラメータを PostgreSQL の通信プロトコルの形式にエンコードして送信
     │
     ▼ ⑥ PostgreSQL
-  バイナリを受信し、NUMERIC(10, 2) 列にデコードして保存
+  パラメータを受信し、NUMERIC(10, 2) 列の内部表現に変換して保存
 
 ────────────────────────────────────────────────────────────
 
 【2. DB 取り出し 〜 レスポンス返却】
-  PostgreSQL から SELECT（または commit 後の再取得）
+  PostgreSQL から SELECT（get_item_from_id など）
     │
     ▼ ⑦ DB ドライバ + SQLAlchemy（Numeric カラム設定）
   DB の数値を Python の Decimal に変換（★ここで Decimal に確定）
     │
     ▼ ⑧ エンドポイント関数
   Item インスタンスを受け取る（item.price は Decimal 型）
+  ※ 作成直後（create_item の戻り値）は DB から読み直さないため float のまま
     │
     ▼ ⑨ Pydantic レスポンス変換（response_model=ItemPublic）
-  ItemPublic.price（float 定義）により float に変換
+  ItemPublic.price（float 定義）により float として出力
     │
     ▼ ⑩ JSONResponse
   レスポンス JSON（"price": 123.45）としてクライアントへ返却
@@ -71,16 +74,17 @@ FastAPI における POST リクエストの受信から、DB 保存、データ
 
 ### ⑤ & ⑥ DB ドライバによる送信と DB での保存
 - SQLAlchemy が SQL（`INSERT INTO items (price, ...) VALUES (%s, ...)`）を組み立てます。
-- PostgreSQL 用の DB ドライバ（`psycopg` 等）が、Python の `float` 値と SQL 文を PostgreSQL の通信プロトコルに従ったバイナリデータに変換してネットワーク送信します。
-- PostgreSQL は受信したバイナリを自身の `NUMERIC(10, 2)` 型の内部表現にデコードし、四捨五入などの丸め処理を行って保存します。
+- PostgreSQL 用の DB ドライバ（`psycopg` 等）が、Python の `float` 値と SQL 文を PostgreSQL の通信プロトコルに従ったデータ（ドライバや型に応じてテキスト形式またはバイナリ形式）に変換してネットワーク送信します。
+- PostgreSQL は受信したパラメータを自身の `NUMERIC(10, 2)` 型の内部表現に変換し、四捨五入などの丸め処理を行って保存します。
 
 ### ⑦ & ⑧ DB からの取り出しとエンドポイント関数
-- `crud.get_item_from_id()` などでデータを読み出す際、または `commit()` 後の属性参照時に DB からデータが取得されます。
+- `crud.get_item_from_id()` などでデータを読み出す際に DB からデータが取得されます。
 - SQLAlchemy の `Numeric(10, 2)`（デフォルトで `asdecimal=True`）および DB ドライバの連携により、数値データが Python の **`Decimal` 型** に変換されます。
 - エンドポイント関数が受け取る `Item` モデルインスタンスの `item.price` は **`Decimal`** になっています。
+- ただし作成直後（`crud.create_item` の戻り値）は例外です。セッションが `expire_on_commit=False`（commit 後も属性の値を破棄しない設定）で、`refresh(new_item, ["category"])` は `category` だけを読み直すため、`price` は DB から再取得されず ④ で代入した **`float`** のままです。
 
 ### ⑨ & ⑩ レスポンス変換と返却
-- エンドポイントの `response_model=ItemPublic` の定義（`price: float`）により、Pydantic が `Decimal` を `float` に変換してシリアライズします。
+- エンドポイントの `response_model=ItemPublic` の定義（`price: float`）により、Pydantic が `Decimal`（作成直後は `float`）を `float` として検証・シリアライズします。
 - 最終的に JSON 文字列（バイト列）に変換され、HTTP レスポンスとしてクライアントに返されます。
 
 ---

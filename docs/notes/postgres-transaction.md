@@ -27,19 +27,38 @@
 ### 第2章：トランザクションとMVCC（仮想XIDと本物XID）
 **（読み取りと書き込みで裏側はどう動いているのか？）**
 
+#### ⓪ 論理的なトランザクション（SQLAlchemy側のトランザクション管理）
+DBへ実際に送られる `BEGIN`（①で解説）の前に、まずPythonコード側（SQLAlchemyの `Session`）が管理している **「論理的なトランザクション」** について整理します。
+論理的なトランザクションとは、SQLAlchemyがメモリ上で管理している **「ここからここまでを1つの作業単位（まとめて `commit` または `rollback` する範囲）とする」という枠組み** のことです。
+
+SQLAlchemyでこの枠組みを始める書き方には、以下の2通りがあります。
+
+* **自動でスタートする場合（通常の書き方）:**
+  通常の使い方では、トランザクションを開始するための特別なコードを書く必要はありません。`session.execute(...)` や `session.add(...)` など、`Session` を使って最初の操作を行った瞬間に、SQLAlchemy側で自動的に論理的なトランザクションが開始されます。作業の最後に `session.commit()`（または `session.rollback()`）を呼ぶことで、この枠組みが終了します。
+* **コードで明示的に開く場合（`with session.begin():`）:**
+  コード上で「ここからここまでが1つのトランザクション」と範囲をはっきりさせたい場合は、`with session.begin():` を使います。この書き方では、`with` ブロックに入った時点で論理的なトランザクションが開き、**ブロックを正常に抜けると自動で `commit()`、途中でエラー（例外）が起きると自動で `rollback()`** が呼ばれます（`commit()` の書き忘れを防げるメリットがあります）。
+
+```
+【自動でスタートする場合】
+session を使った最初の操作 ──(論理トランザクション中)──> session.commit() で終了
+
+【明示的に開く場合】
+with session.begin(): ───────(論理トランザクション中)──> ブロック終了時に自動で commit / rollback
+```
+
+どちらの書き方をした場合でも、裏側でDBへ実際に `BEGIN` が送られる仕組みは次の①の通り共通です。
+
 #### ① トランザクションの自動開始（Auto-begin）と状態把握
 * SELECTであってもINSERTであっても、**「最初のSQLが実行される直前に、裏で自動的にトランザクションが開始（`BEGIN`）される」** という仕様になっています。実際にDBへ `BEGIN` を自動で送るのはDBドライバ（`psycopg`）で、SQLAlchemy（Session）はそれを前提に、`commit()` / `rollback()` 側を管理します（詳細は下のコラム）。
 * **状態把握の仕組み（無駄打ちの防止）:** SQLAlchemyやDBドライバ（`psycopg`（psycopg3）等）は、メモリ上で「現在トランザクションが開いているか」を正確に追跡・管理しています。そのため、2回目以降のSQL送信時に無駄な `BEGIN` を毎回送信することは一切ありません。
 * SELECT（読み取り）をするだけでも、DB側ではトランザクションが開いた状態になります。
 
-> **💡 コラム：`BEGIN` を実際に送っているのは誰？（`autocommit=False` ＝既定の場合）**
+> **💡 コラム：`BEGIN` を実際に送っているのは誰？**
 >
-> 前提：PostgreSQL・`psycopg`（psycopg3）・SQLAlchemy 2.x の組み合わせで、`autocommit=False`（既定）のとき。
+> 前提：PostgreSQL・`psycopg`（psycopg3）・SQLAlchemy 2.x の組み合わせのとき。
 >
 > * **実際にDBへ `BEGIN` を送るのは `psycopg`（DBドライバ）。** SQLAlchemy ではない。SQLAlchemy公式ドキュメントにも「DBAPI（psycopg等）自体に `begin()` メソッドは無く、autobegin が実際に起きるのは DBAPI 側」と書かれている。
 > * **`psycopg` は自分で状態を判断する。** PostgreSQLは各クエリの応答の最後に `ReadyForQuery` というメッセージを返し、そこに「いまトランザクション中か」の状態が入っている。`psycopg` はこの状態を見て、トランザクション外なら次のSQLの直前に `BEGIN` を自動で送る。**SQLAlchemyからの指令は不要。**
-> * **SQLAlchemy の役割は「終わらせる側」。** `commit()` / `rollback()` / `close()` を呼ぶタイミングを管理する責任を持つ。ログに出る `BEGIN (implicit)` は SQLAlchemy 側の論理的な開始の記録であり、DBへ `BEGIN` を送った記録ではない。
-> * **`with session.begin():` は DBの `BEGIN` とは別物ではなく、同じ1つのトランザクションの範囲をユーザーが明示するもの。** `with` ブロックを抜けるときに、正常なら `commit`、例外なら `rollback` が自動で呼ばれる。DBへ送る `BEGIN` は、これまで通り最初のSQLの直前に `psycopg` が送る（※「`session.begin()` 自体はDBへ何も送らない」点は公式ドキュメントからの推測で、実際のSQLログでは未検証）。
 > * **ユーザーが `BEGIN` を書く必要はない。** ただし `commit()` は自分で呼ぶか `with session.begin():` を使う必要がある（忘れると変更は確定されない）。
 >
 > ```
@@ -48,8 +67,6 @@
 >                      ▼                                          ▼
 > psycopg 側:     最初のSQLの直前に BEGIN を送る → SQL → … → COMMIT / ROLLBACK
 > ```
->
-> ※ `autocommit=True` にした場合は `BEGIN` は自動では送られない（1文ごとにコミット）。
 
 #### ② 「仮想XID」からスタートする賢い仕組み
 * トランザクションが始まった瞬間、PostgreSQLは「この後、読み取りが来るか書き込みが来るか」をまだ知りません。

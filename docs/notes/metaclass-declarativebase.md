@@ -27,6 +27,12 @@ class User(metaclass=type):
 ### ③ 自作メタクラス `class MyMeta(type)` の役割
 * `type` を継承して自作メタクラスを定義することで、C言語レベルのクラス作成処理の**前後**に割り込み（フック）を行い、属性の自動追加・バリデーション・クラスの自動登録などの処理を追加できます。
 
+| やりたいこと | 書き方 | 意味 |
+| :--- | :--- | :--- |
+| **普通のクラスを作る** | `class MyClass:` | 裏で自動的に `class MyClass(metaclass=type):` として扱われる |
+| **自作メタクラスを作る** | `class MyMetaClass(type):` | `type` を継承して、新しいメタクラス（クラス製造機）を定義する |
+| **自作メタクラスを使う** | `class MyClass(metaclass=MyMetaClass):` | 普通のクラスを作るときに、製造機を `type` から `MyMetaClass` に差し替える |
+
 ---
 
 ## 2. SQLAlchemy 2.0 における 2 つのフック機構の役割分担
@@ -43,7 +49,7 @@ SQLAlchemy 2.0 の `DeclarativeBase` では、**「`__init_subclass__`」** と 
 
 | 機構 | 担当する役割 | 動作するタイミング |
 | :--- | :--- | :--- |
-| **`__init_subclass__`**<br>(Python標準のサブクラスフック) | **【クラス定義時の登録・解析】**<br>・`registry` と `metadata` (クラス変数)の初期化<br>・`__tablename__` や `Mapped[...]`、`mapped_column()` のスキャン<br>・SQLAlchemy Core の `Table` / `Column` オブジェクトの自動生成と登録 | `class Base(...)` や `class User(Base)` のコードが評価（インポート）された瞬間 |
+| **`__init_subclass__`**<br>(Python標準のサブクラスフック) | **【クラス定義時の登録・解析】**<br>・`registry` と `metadata` (クラス変数)の初期化（※1番目の子供＝`DeclarativeBase` を直接継承した `Base` の作成時のみ）<br>・`__tablename__` や `Mapped[...]`、`mapped_column()` のスキャン<br>・SQLAlchemy Core の `Table` / `Column` オブジェクトの自動生成と登録 | `class Base(DeclarativeBase)` や `class User(Base)` のコードが評価（インポート）された瞬間 |
 | **メタクラス**<br>(`DeclarativeAttributeIntercept`) | **【クラス定義後の動的変更の検知】**<br>・クラス定義完了後に、後からクラス変数が代入・更新された時の検知（`__setattr__` のフック）<br>・特殊なクラス属性アクセスの横取り | `User.nickname = mapped_column(...)` のように後から属性が追加・変更された時 |
 
 ---
@@ -53,7 +59,7 @@ SQLAlchemy 2.0 の `DeclarativeBase` では、**「`__init_subclass__`」** と 
 ### Step 1: `class Base(DeclarativeBase): pass` の定義時
 1. `DeclarativeBase.__init_subclass__` が作動。
 2. このグループ専用の **新しい `registry`** と **`metadata`（`registry.metadata`）** が生成される。
-3. `Base.registry` および `Base.metadata` としてクラス変数にセットされる。
+3. `Base.registry` および `Base.metadata` としてクラス変数にセットされる（※`Base.metadata` は毎回 `Base.registry.metadata` と書かずに済むよう、`Base.metadata = Base.registry.metadata` として同じオブジェクトへの参照＝ショートカットがセットされる）。
 
 #### 補足：Step 1 と Step 2 はどう振り分けられているか
 SQLAlchemyは、定義しているクラスの「すぐ真上の親」が何かを見て処理を分けています。
@@ -90,7 +96,7 @@ class User(Base):
 ```
 
 ### 理由①：`registry` / `metadata` のグループ境界（シングルトン共有）を作るため
-* `DeclarativeBase` は「それを直接継承したクラスに対して新しい `registry` を発行する」という仕様です。
+* `DeclarativeBase` は「それを直接継承したクラスのみに対して新しい `registry` を発行する」という仕様です。
 * `User` と `Post` が直接 `DeclarativeBase` を継承すると別々のレジストリに分離してしまい、テーブル間のリレーション（ForeignKey）が組めなくなります。
 * `Base` を1つ挟むことで、**「`Base` の傘下にいる全モデルが同じ `metadata` / `registry` を共有する」** という境界が作られます。
 

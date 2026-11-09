@@ -6,7 +6,7 @@
 [
   {
     "type": "greater_than",
-    "loc": ["price"],                # フィールド名から始まる
+    "loc": ("price",),                # フィールド名から始まる
     "msg": "Input should be greater than 0",
     "input": -1,
     "ctx": {"gt": 0},
@@ -21,13 +21,13 @@
 [
   {
     "type": "int_parsing",
-    "loc": ["query", "q"],           # 出所が先頭に付く
+    "loc": ("query", "q"),           # 出所が先頭に付く
     "msg": "Input should be a valid integer, unable to parse string as an integer",
     "input": "abc"
   },
   {
     "type": "greater_than",
-    "loc": ["body", "price"],        # 出所が先頭に付く
+    "loc": ("body", "price"),        # 出所が先頭に付く
     "msg": "Input should be greater than 0",
     "input": -1,
     "ctx": {"gt": 0}
@@ -40,11 +40,24 @@
 
 どちらも `errors()` で dict のリストが取れ、1件でも `[...]` で囲まれます。違いは3点です。
 
-1. **`loc` の先頭**。pydantic は `["price"]`、RequestValidationError は `["body", "price"]` / `["query", "q"]` と出所が付く。あなたのコードの `error["loc"][1:]` はこれを落とすためのもの。
+1. **`loc` の先頭**。pydantic は `("price",)`、RequestValidationError は `("body", "price")` / `("query", "q")` と出所が付く。あなたのコードの `error["loc"][1:]` はこれを落とすためのもの。
 2. **まとめられる範囲**。pydantic は1つのモデルの結果だけ。RequestValidationError は query と body のエラーを1個の例外にまとめて持つ（上の例は2件で1つのリスト）。
 3. **`url` キー**。pydantic にはあり、RequestValidationError には無い。
 
-クラスとしては継承関係がなく、`errors()` は同じ名前で別々に定義された別物です。持っている属性も異なり、生のリクエストボディを保持する `body` 属性は `RequestValidationError` だけが持っています（pydantic の `ValidationError` にはありません）。
+クラスとしては継承関係がなく、`errors()` は同じ名前で別々に定義された別物です。
+
+> **補足：`e.errors()` と `e.body` の違い**
+>
+> `RequestValidationError` の場合について、(例外オブジェクトを `e` とすると、) `e.errors()` とは別に、`e.body` で、送信されたリクエスト本文のデータを取得できます。（ここでの **`body` は上のエラー一覧に含まれるキーの 'body' ではなく、例外オブジェクト `e` が持つ属性です。**）
+>
+> 例えば、リクエスト本文として `{"price": -1}` が送られた場合は、次のようになります。
+>
+> ```python
+> e.errors()  # 上の例のような、エラーの場所や理由を示す辞書のリスト
+> e.body      # {"price": -1}（送られてきた本文全体）
+> ```
+>
+> 通常のJSONリクエストでは、`e.body` にはJSONを解析した辞書などが入ります。Pydanticの `ValidationError` の方には、この `body` 属性はありません。
 
 型注釈や `Field` の制約など、pydantic が自動でチェックしている項目のエラー（例: `item_id: int` に `"abc"` を渡した、`q: int` にクエリで数値以外を渡した）は、path・query・header・body・Depends のどこで起きたものでも、まとめて1つの `RequestValidationError` に集約されます。
 
@@ -126,13 +139,14 @@ class User(BaseModel):
 try:
     User(name=["Taro"], age=-5) # nameにリスト、ageにマイナスの値を渡す
 except ValidationError as e:
-    # エラーの構造をリスト（辞書）で取得して表示
-    import json
-    print(json.dumps(e.errors(), indent=2, ensure_ascii=False))
+    # エラー情報をJSON文字列として取得し、インデントを付けて表示
+    print(e.json(indent=2))
 ```
 
 #### 出力されるエラー構造の中身（JSON）
 上記を実行すると、以下のような構造のデータが取得できます。
+
+**`e.errors()` が返すPythonオブジェクトでは、`loc` は `("name",)` のようなタプルです。** 上のコードは `e.json(indent=2)` でJSON文字列として取得して表示しているため、以下では `"loc": ["name"]` というJSON配列になります。JSONにはタプル型がないためです。
 
 ```json
 [
